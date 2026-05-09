@@ -14,148 +14,104 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="6"/>
-            <RowDefinition Height="220"/>
+            <RowDefinition Height="260"/>
             <RowDefinition Height="28"/>
         </Grid.RowDefinitions>
 
+        <!-- ツールバー -->
         <Border Grid.Row="0" Padding="8" Background="#F3F3F3">
             <WrapPanel Orientation="Horizontal">
-                <!-- URL入力 -->
+
+                <!-- ===== 左サイト ===== -->
                 <TextBox x:Name="LeftUrlTextBox"
                          Width="280" Margin="0,0,8,8"
                          VerticalContentAlignment="Center"
                          Text="https://www.perplexity.ai/" />
-                <Button x:Name="LeftGoButton"
-                        Width="80" Margin="0,0,8,8"
-                        Content="左へ移動"
-                        Click="LeftGoButton_Click"/>
+                <Button x:Name="LeftGoButton" Width="80" Margin="0,0,4,8"
+                        Content="左へ移動" Click="LeftGoButton_Click"/>
+                <Button x:Name="LeftTitleButton" Width="100" Margin="0,0,4,8"
+                        Content="左タイトル取得" Click="LeftTitleButton_Click"
+                        ToolTip="左 WebView のページタイトルをクリップボードにコピーします"/>
+                <Button x:Name="LeftSelectionButton" Width="100" Margin="0,0,16,8"
+                        Content="左選択取得" Click="LeftSelectionButton_Click"
+                        ToolTip="左 WebView で選択中のテキストをクリップボードにコピーします"/>
+
+                <!-- ===== 右サイト ===== -->
                 <TextBox x:Name="RightUrlTextBox"
                          Width="280" Margin="0,0,8,8"
                          VerticalContentAlignment="Center"
                          Text="https://gemini.google.com/app?hl=ja" />
-                <Button x:Name="RightGoButton"
-                        Width="80" Margin="0,0,16,8"
-                        Content="右へ移動"
-                        Click="RightGoButton_Click"/>
+                <Button x:Name="RightGoButton" Width="80" Margin="0,0,4,8"
+                        Content="右へ移動" Click="RightGoButton_Click"/>
+                <Button x:Name="RightTitleButton" Width="100" Margin="0,0,4,8"
+                        Content="右タイトル取得" Click="RightTitleButton_Click"
+                        ToolTip="右 WebView のページタイトルをクリップボードにコピーします"/>
+                <Button x:Name="RightSelectionButton" Width="100" Margin="0,0,16,8"
+                        Content="右選択取得" Click="RightSelectionButton_Click"
+                        ToolTip="右 WebView で選択中のテキストをクリップボードにコピーします"/>
 
-                <!-- 手動操作 -->
-                <CheckBox x:Name="AppendBridgeCheckBox"
-                          Margin="0,4,12,8" VerticalAlignment="Center"
-                          IsChecked="True" Content="橋渡し文を付ける" />
-                <CheckBox x:Name="ConfirmBeforeSendCheckBox"
-                          Margin="0,4,12,8" VerticalAlignment="Center"
-                          IsChecked="False" Content="送信前確認" />
-                <Button x:Name="SendLeftSelectionToRightInputButton"
-                        Width="120" Margin="0,0,8,8"
-                        Content="左→右入力"
-                        Click="SendLeftSelectionToRightInputButton_Click"/>
-                <Button x:Name="SendLeftSelectionToRightSubmitButton"
-                        Width="120" Margin="0,0,8,8"
-                        Content="左→右送信"
-                        Click="SendLeftSelectionToRightSubmitButton_Click"/>
-                <Button x:Name="SendRightSelectionToLeftInputButton"
-                        Width="120" Margin="0,0,8,8"
-                        Content="右→左入力"
-                        Click="SendRightSelectionToLeftInputButton_Click"/>
-                <Button x:Name="SendRightSelectionToLeftSubmitButton"
-                        Width="120" Margin="0,0,16,8"
-                        Content="右→左送信"
-                        Click="SendRightSelectionToLeftSubmitButton_Click"/>
+                <!-- ===== 転送オプション ===== -->
+                <CheckBox x:Name="AppendBridgeCheckBox" Margin="0,4,12,8"
+                          VerticalAlignment="Center" IsChecked="True"
+                          Content="橋渡し文を付ける" />
+                <CheckBox x:Name="ConfirmBeforeSendCheckBox" Margin="0,4,12,8"
+                          VerticalAlignment="Center" IsChecked="False"
+                          Content="送信前確認" />
 
-                <!-- 自動討論 -->
-                <Button x:Name="StartAutoDebateButton"
-                        Content="▶ 自動開始" Width="90" Margin="0,0,4,8"
+                <!-- ===== 手動転送 ===== -->
+                <Button x:Name="SendLeftSelectionToRightInputButton" Width="120" Margin="0,0,8,8"
+                        Content="左→右入力" Click="SendLeftSelectionToRightInputButton_Click"/>
+                <Button x:Name="SendLeftSelectionToRightSubmitButton" Width="120" Margin="0,0,8,8"
+                        Content="左→右送信" Click="SendLeftSelectionToRightSubmitButton_Click"/>
+                <Button x:Name="SendRightSelectionToLeftInputButton" Width="120" Margin="0,0,8,8"
+                        Content="右→左入力" Click="SendRightSelectionToLeftInputButton_Click"/>
+                <Button x:Name="SendRightSelectionToLeftSubmitButton" Width="120" Margin="0,0,16,8"
+                        Content="右→左送信" Click="SendRightSelectionToLeftSubmitButton_Click"/>
+
+                <!-- ===== 自動討論 ===== -->
+                <Button x:Name="StartAutoDebateButton" Content="▶ 自動開始" Width="90" Margin="0,0,4,8"
                         Click="StartAutoDebateButton_Click"/>
-                <Button x:Name="StopAutoDebateButton"
-                        Content="■ 停止" Width="70" Margin="0,0,4,8"
-                        IsEnabled="False"
-                        Click="StopAutoDebateButton_Click"/>
-                <Button x:Name="PauseResumeButton"
-                        Content="一時停止" Width="80" Margin="0,0,4,8"
-                        IsEnabled="False"
-                        Click="PauseResumeButton_Click"/>
+                <Button x:Name="StopAutoDebateButton" Content="■ 停止" Width="70" Margin="0,0,4,8"
+                        IsEnabled="False" Click="StopAutoDebateButton_Click"/>
+                <Button x:Name="PauseResumeButton" Content="一時停止" Width="80" Margin="0,0,8,8"
+                        IsEnabled="False" Click="PauseResumeButton_Click"/>
 
-                <!-- FR-08 途中介入 -->
-                <Button x:Name="InterventionButton"
-                        Content="✂ 介入" Width="70" Margin="0,0,8,8"
-                        IsEnabled="False"
-                        ToolTip="討論を一時停止して途中介入する"
-                        Click="InterventionButton_Click"/>
-
-                <!-- FR-06 役割設定 -->
-                <Button x:Name="RoleSettingsButton"
-                        Content="🎭 役割設定" Width="90" Margin="0,0,8,8"
-                        ToolTip="左右AIの役割・インストラクションを設定"
-                        Click="RoleSettingsButton_Click"/>
-
-                <!-- ターン数 -->
+                <!-- ===== ターン数制限 ===== -->
                 <TextBlock Text="最大ターン数:" VerticalAlignment="Center" Margin="0,0,4,8"/>
-                <TextBox x:Name="MaxTurnsTextBox"
-                         Width="50" Margin="0,0,4,8"
-                         VerticalContentAlignment="Center"
-                         ToolTip="0 = 無制限" Text="0"/>
+                <TextBox x:Name="MaxTurnsTextBox" Width="50" Margin="0,0,4,8"
+                         VerticalContentAlignment="Center" ToolTip="0 = 無制限" Text="0"/>
                 <TextBlock Text="(0=無制限)" VerticalAlignment="Center"
                            Foreground="Gray" Margin="0,0,8,8" FontSize="11"/>
-                <TextBlock x:Name="TurnCountTextBlock"
-                           Text="ターン: 0" VerticalAlignment="Center"
-                           Margin="0,0,16,8"
+                <TextBlock x:Name="TurnCountTextBlock" Text="ターン: 0"
+                           VerticalAlignment="Center" Margin="0,0,16,8"
                            Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
 
-                <!-- 区切り -->
-                <Separator Width="1" Height="20" Margin="0,0,12,8" VerticalAlignment="Center"/>
+                <!-- ===== ログ保存 ===== -->
+                <Button x:Name="SaveLogJsonButton" Content="💾 JSON保存" Width="90" Margin="0,0,4,8"
+                        Click="SaveLogJsonButton_Click"
+                        ToolTip="現在セッションのログを JSON で保存します"/>
+                <Button x:Name="SaveLogMdButton" Content="📄 MD保存" Width="90" Margin="0,0,4,8"
+                        Click="SaveLogMdButton_Click"
+                        ToolTip="現在セッションのログを Markdown で保存します"/>
 
-                <!-- エクスポート -->
-                <TextBlock Text="エクスポート:" VerticalAlignment="Center"
-                           FontWeight="Bold" Margin="0,0,6,8"/>
-                <Button x:Name="ExportMarkdownButton"
-                        Width="120" Margin="0,0,4,8"
-                        Content="Markdown 保存"
-                        ToolTip="現セッションを .md ファイルに保存"
-                        Click="ExportMarkdownButton_Click"/>
-                <Button x:Name="ExportJsonButton"
-                        Width="100" Margin="0,0,4,8"
-                        Content="JSON 保存"
-                        ToolTip="現セッションを .json ファイルに保存"
-                        Click="ExportJsonButton_Click"/>
-                <Button x:Name="OpenSessionFolderButton"
-                        Width="120" Margin="0,0,0,8"
-                        Content="フォルダを開く"
-                        ToolTip="%LOCALAPPDATA%\gironWin\sessions\ をエクスプローラーで開く"
-                        Click="OpenSessionFolderButton_Click"/>
+                <!-- ===== 議題入力 ===== -->
+                <TextBlock Text="議題:" VerticalAlignment="Center" Margin="8,0,4,8"/>
+                <TextBox x:Name="TopicTextBox" Width="200" Margin="0,0,8,8"
+                         VerticalContentAlignment="Center"
+                         ToolTip="討論の議題を入力してください"
+                         Text=""/>
+
             </WrapPanel>
         </Border>
 
-        <!-- FR-09 承認待ちバナー -->
-        <Border x:Name="ApprovalBanner"
-                Grid.Row="1"
-                VerticalAlignment="Top"
-                Background="#fff3cd"
-                BorderBrush="#ffc107"
-                BorderThickness="0,0,0,2"
-                Padding="12,6"
-                Visibility="Collapsed"
-                Panel.ZIndex="10">
-            <DockPanel>
-                <TextBlock x:Name="ApprovalBannerText"
-                           Text="承認待ちの送信があります。"
-                           VerticalAlignment="Center"
-                           FontWeight="Bold"
-                           Foreground="#856404"/>
-                <Button Content="承認ウィンドウを開く"
-                        DockPanel.Dock="Right"
-                        Margin="12,0,0,0"
-                        Padding="8,2"
-                        Click="OpenApprovalWindowButton_Click"/>
-            </DockPanel>
-        </Border>
-
+        <!-- WebView2 左右ペイン -->
         <Grid Grid.Row="1" Margin="8,0,8,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="6"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <wv2:WebView2 x:Name="LeftWebView"  Grid.Column="0" />
+            <wv2:WebView2 x:Name="LeftWebView" Grid.Column="0" />
             <GridSplitter Grid.Column="1" Width="6"
                           HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
             <wv2:WebView2 x:Name="RightWebView" Grid.Column="2" />
@@ -165,6 +121,7 @@
                       HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                       ResizeDirection="Rows" Background="#D0D0D0"/>
 
+        <!-- 送信履歴パネル -->
         <Border Grid.Row="3" Margin="8,0,8,8" Padding="8"
                 BorderBrush="#D0D0D0" BorderThickness="1"
                 CornerRadius="6" Background="#FAFAFA">
@@ -173,42 +130,63 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
+
                 <DockPanel Grid.Row="0" Margin="0,0,0,8">
-                    <TextBlock Text="送信履歴" FontSize="16" FontWeight="Bold" VerticalAlignment="Center" />
-                    <Button Content="履歴クリア" Width="100" Margin="12,0,0,0" Click="ClearHistoryButton_Click"/>
+                    <TextBlock Text="送信履歴" FontSize="16" FontWeight="Bold"
+                               VerticalAlignment="Center" />
+                    <Button Content="履歴クリア" Width="100" Margin="12,0,0,0"
+                            Click="ClearHistoryButton_Click"/>
+                    <Button x:Name="QuoteFullButton" Content="引用 (全文)" Width="100" Margin="12,0,0,0"
+                            Click="QuoteFullButton_Click"
+                            ToolTip="選択した履歴を全文引用してクリップボードへコピーします"/>
+                    <Button x:Name="ApproveButton" Content="✔ 承認" Width="80" Margin="8,0,0,0"
+                            Click="ApproveButton_Click"
+                            ToolTip="選択した履歴を承認済みに変更します"/>
+                    <Button x:Name="RejectButton" Content="✘ 却下" Width="80" Margin="4,0,0,0"
+                            Click="RejectButton_Click"
+                            ToolTip="選択した履歴を却下に変更します"/>
+                    <TextBlock x:Name="SessionStatsTextBlock"
+                               Text="" VerticalAlignment="Center" Margin="16,0,0,0"
+                               Foreground="Gray" FontSize="11"/>
                 </DockPanel>
+
                 <ListView Grid.Row="1"
                           ItemsSource="{Binding TransferRecords}"
                           x:Name="TransferHistoryListView"
                           MouseDoubleClick="TransferHistoryListView_MouseDoubleClick">
                     <ListView.ContextMenu>
                         <ContextMenu>
-                            <MenuItem Header="全文コピー"       Click="CopySelectedHistoryTextMenuItem_Click"/>
-                            <MenuItem Header="詳細表示"         Click="OpenSelectedHistoryPreviewMenuItem_Click"/>
+                            <MenuItem Header="全文コピー" Click="CopySelectedHistoryTextMenuItem_Click"/>
+                            <MenuItem Header="詳細表示" Click="OpenSelectedHistoryPreviewMenuItem_Click"/>
                             <Separator/>
-                            <MenuItem Header="左へ入力"         Click="ReuseToLeftInputMenuItem_Click"/>
-                            <MenuItem Header="左へ送信"         Click="ReuseToLeftSubmitMenuItem_Click"/>
-                            <MenuItem Header="右へ入力"         Click="ReuseToRightInputMenuItem_Click"/>
-                            <MenuItem Header="右へ送信"         Click="ReuseToRightSubmitMenuItem_Click"/>
+                            <MenuItem Header="左へ入力" Click="ReuseToLeftInputMenuItem_Click"/>
+                            <MenuItem Header="左へ送信" Click="ReuseToLeftSubmitMenuItem_Click"/>
+                            <MenuItem Header="右へ入力" Click="ReuseToRightInputMenuItem_Click"/>
+                            <MenuItem Header="右へ送信" Click="ReuseToRightSubmitMenuItem_Click"/>
                             <Separator/>
-                            <!-- FR-10 引用返信 -->
-                            <MenuItem Header="全文引用して左へ送信"   Click="QuoteToLeftMenuItem_Click"/>
-                            <MenuItem Header="全文引用して右へ送信"   Click="QuoteToRightMenuItem_Click"/>
+                            <MenuItem Header="引用 (全文) → クリップボード" Click="QuoteFullMenuItem_Click"/>
+                            <MenuItem Header="承認済みに変更" Click="ApproveMenuItem_Click"/>
+                            <MenuItem Header="却下に変更" Click="RejectMenuItem_Click"/>
+                            <MenuItem Header="段落一覧を表示" Click="ShowParagraphsMenuItem_Click"/>
                         </ContextMenu>
                     </ListView.ContextMenu>
                     <ListView.View>
                         <GridView>
-                            <GridViewColumn Header="時刻"     Width="150" DisplayMemberBinding="{Binding TimestampText}" />
-                            <GridViewColumn Header="方向"     Width="180" DisplayMemberBinding="{Binding Direction}" />
-                            <GridViewColumn Header="送信種別" Width="90"  DisplayMemberBinding="{Binding SubmittedText}" />
-                            <GridViewColumn Header="状態"     Width="120" DisplayMemberBinding="{Binding Status}" />
-                            <GridViewColumn Header="内容"     Width="850" DisplayMemberBinding="{Binding PreviewText}" />
+                            <GridViewColumn Header="時刻" Width="145" DisplayMemberBinding="{Binding TimestampText}" />
+                            <GridViewColumn Header="方向" Width="175" DisplayMemberBinding="{Binding Direction}" />
+                            <GridViewColumn Header="ターン" Width="55" DisplayMemberBinding="{Binding TurnNumber}" />
+                            <GridViewColumn Header="役割" Width="80" DisplayMemberBinding="{Binding ParticipantRole}" />
+                            <GridViewColumn Header="送信種別" Width="80" DisplayMemberBinding="{Binding SubmittedText}" />
+                            <GridViewColumn Header="承認状態" Width="90" DisplayMemberBinding="{Binding ApprovalStatusText}" />
+                            <GridViewColumn Header="段落" Width="60" DisplayMemberBinding="{Binding ParagraphCountText}" />
+                            <GridViewColumn Header="内容" Width="720" DisplayMemberBinding="{Binding PreviewText}" />
                         </GridView>
                     </ListView.View>
                 </ListView>
             </Grid>
         </Border>
 
+        <!-- ステータスバー -->
         <Border Grid.Row="4" Margin="8,0,8,8" Padding="6,2"
                 BorderBrush="#D0D0D0" BorderThickness="1"
                 CornerRadius="4" Background="#F5F5F5">
