@@ -9,6 +9,9 @@ namespace gironWin
     {
         public override string SiteName => "Perplexity";
 
+        public event EventHandler<string>? DebugLog;
+        private void Log(string msg) => DebugLog?.Invoke(this, msg);
+
         public override bool CanHandle(string url)
         {
             return !string.IsNullOrWhiteSpace(url) &&
@@ -19,14 +22,36 @@ namespace gironWin
         {
             if (webView?.CoreWebView2 == null) return false;
 
+            // 診断: 入力欄を探す
+            string diagScript = @"
+(() => {
+    const all = Array.from(document.querySelectorAll(
+        'input,textarea,div[contenteditable],#ask-input'
+    ));
+    return JSON.stringify(all.map(el => ({
+        tag: el.tagName,
+        ce: el.getAttribute('contenteditable') || '',
+        role: el.getAttribute('role') || '',
+        id: el.id || '',
+        cls: (el.className || '').substring(0, 60),
+        vis: (() => {
+            const s = window.getComputedStyle(el);
+            return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null;
+        })()
+    })));
+})();";
+            try
+            {
+                string diagJson = await webView.ExecuteScriptAsync(diagScript);
+                Log($"[PerplexityInput] DOM: {diagJson}");
+            }
+            catch (Exception ex) { Log($"[PerplexityInput] Diag error: {ex.Message}"); }
+
             string escapedText = JsonSerializer.Serialize(text);
 
-            // ★ 修正版:
-            //   1. DataTransfer API（clipboard write 相当）で insertText
-            //   2. 失敗したら execCommand('insertText') にフォールバック
-            //   3. textContent への直接代入は使わない（Reactがリセットするため）
+            // ★ async/await/setTimeout を一切使わない同期スクリプト
             string script = $@"
-(async () => {{
+(() => {{
     const text = {escapedText};
 
     function isVisible(el) {{
@@ -35,138 +60,181 @@ namespace gironWin
         return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null;
     }}
 
-    function findInput() {{
-        const candidates = [
-            '#ask-input[contenteditable=""true""]',
-            '#ask-input',
-            'div[contenteditable=""true""][role=""textbox""]',
-            'div[role=""textbox""][contenteditable=""true""]',
-            'div[contenteditable=""true""]',
-            'textarea'
-        ];
-        for (const sel of candidates) {{
-            const nodes = Array.from(document.querySelectorAll(sel)).filter(isVisible);
-            if (nodes.length > 0) return nodes[0];
-        }}
-        return null;
+    const selectors = [
+        '#ask-input[contenteditable=""true""]',
+        '#ask-input',
+        'div[contenteditable=""true""][role=""textbox""]',
+        'div[role=""textbox""][contenteditable=""true""]',
+        'div[contenteditable=""true""]',
+        'textarea',
+        'input[type=""text""]'
+    ];
+
+    let el = null;
+    for (const sel of selectors) {{
+        const found = Array.from(document.querySelectorAll(sel)).filter(isVisible);
+        if (found.length > 0) {{ el = found[0]; break; }}
     }}
-
-    // ---- contenteditable への確実な挿入 ----
-    async function insertIntoEditable(el, value) {{
-        el.focus();
-
-        // 全選択して削除
-        try {{
-            document.execCommand('selectAll', false, null);
-            document.execCommand('delete', false, null);
-        }} catch(e) {{}}
-
-        // DataTransfer を使った貼り付け（最も確実）
-        try {{
-            const dt = new DataTransfer();
-            dt.setData('text/plain', value);
-            const pasteEvent = new ClipboardEvent('paste', {{
-                bubbles: true,
-                cancelable: true,
-                clipboardData: dt
-            }});
-            el.dispatchEvent(pasteEvent);
-
-            // 貼り付け後に内容を確認
-            await new Promise(r => setTimeout(r, 80));
-            const current = (el.innerText || el.textContent || '').trim();
-            if (current.length >= Math.min(value.length, 20)) {{
-                el.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: value }}));
-                return true;
-            }}
-        }} catch(e) {{}}
-
-        // フォールバック: execCommand('insertText')
-        try {{
-            document.execCommand('selectAll', false, null);
-            const ok = document.execCommand('insertText', false, value);
-            if (ok) {{
-                await new Promise(r => setTimeout(r, 50));
-                el.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: value }}));
-                return true;
-            }}
-        }} catch(e) {{}}
-
-        return false;
-    }}
-
-    function insertIntoTextarea(el, value) {{
-        const proto = Object.getPrototypeOf(el);
-        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-        if (setter) setter.call(el, value);
-        else el.value = value;
-        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-        return true;
-    }}
-
-    const el = findInput();
-    if (!el) return false;
+    if (!el) return 'no-input';
 
     el.focus();
-    await new Promise(r => setTimeout(r, 60));
 
+    // TEXTAREA / INPUT
     if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {{
-        return insertIntoTextarea(el, text);
+        try {{
+            const proto = Object.getPrototypeOf(el);
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+            if (setter) setter.call(el, text); else el.value = text;
+            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+            return 'textarea-ok';
+        }} catch(e) {{ return 'textarea-err:' + e.message; }}
     }}
-    return await insertIntoEditable(el, text);
+
+    // contenteditable — まず全選択クリア
+    try {{
+        document.execCommand('selectAll', false, null);
+        document.execCommand('delete', false, null);
+    }} catch(e) {{}}
+
+    // ① DataTransfer paste
+    try {{
+        const dt = new DataTransfer();
+        dt.setData('text/plain', text);
+        el.dispatchEvent(new ClipboardEvent('paste', {{
+            bubbles: true, cancelable: true, clipboardData: dt
+        }}));
+        const cur = (el.innerText || el.textContent || '').trim();
+        if (cur.length > 0) {{
+            el.dispatchEvent(new InputEvent('input', {{
+                bubbles: true, inputType: 'insertText', data: text
+            }}));
+            return 'paste-ok:' + cur.length;
+        }}
+    }} catch(e) {{}}
+
+    // ② execCommand insertText
+    try {{
+        el.focus();
+        document.execCommand('selectAll', false, null);
+        const ok = document.execCommand('insertText', false, text);
+        if (ok) {{
+            el.dispatchEvent(new InputEvent('input', {{
+                bubbles: true, inputType: 'insertText', data: text
+            }}));
+            return 'execCmd-ok';
+        }}
+    }} catch(e) {{}}
+
+    // ③ 最終手段: innerText 直接代入 + React nativeInputValueSetter
+    try {{
+        el.innerHTML = '';
+        const tn = document.createTextNode(text);
+        el.appendChild(tn);
+        el.dispatchEvent(new InputEvent('input', {{
+            bubbles: true, inputType: 'insertText', data: text
+        }}));
+        return 'innerText-ok';
+    }} catch(e) {{}}
+
+    return 'all-failed';
 }})();";
 
-            return await ExecScriptBoolAsync(webView, script);
+            string resultJson = await webView.ExecuteScriptAsync(script);
+            string result = string.Empty;
+            try { result = JsonSerializer.Deserialize<string>(resultJson) ?? string.Empty; }
+            catch { result = resultJson?.Trim('"') ?? string.Empty; }
+
+            Log($"[PerplexityInput] SetInputAsync result='{result}'");
+
+            bool ok = !string.IsNullOrWhiteSpace(result)
+                      && result != "no-input"
+                      && result != "all-failed"
+                      && !result.StartsWith("error")
+                      && !result.EndsWith("-err");
+            return ok;
         }
 
         public override async Task<bool> SendAsync(WebView2 webView)
         {
             if (webView?.CoreWebView2 == null) return false;
 
+            // 診断: ボタンを列挙
+            string diagScript = @"
+(() => {
+    const btns = Array.from(document.querySelectorAll('button')).slice(0, 30);
+    return JSON.stringify(btns.map(b => ({
+        al: b.getAttribute('aria-label') || '',
+        id: b.id || '',
+        cls: (b.className || '').substring(0, 50),
+        dis: b.disabled,
+        vis: (() => {
+            const s = window.getComputedStyle(b);
+            return s.display !== 'none' && s.visibility !== 'hidden';
+        })()
+    })));
+})();";
+            try
+            {
+                string diagJson = await webView.ExecuteScriptAsync(diagScript);
+                Log($"[PerplexitySend] Buttons: {diagJson}");
+            }
+            catch { }
+
             string script = @"
 (() => {
-    function isVisible(el) {
+    function isEnabled(el) {
         if (!el) return false;
+        if (el.disabled) return false;
+        if (el.getAttribute('aria-disabled') === 'true') return false;
         const s = window.getComputedStyle(el);
-        return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null;
+        return s.display !== 'none' && s.visibility !== 'hidden';
     }
 
-    const buttonSelectors = [
+    const btnSelectors = [
         'button[aria-label=""Submit""]',
         'button[aria-label*=""Send""]',
         'button[aria-label*=""送信""]',
+        'button#ask-submit',
+        'button[data-testid=""submit-button""]',
         'button[type=""submit""]',
         'form button'
     ];
 
-    for (const sel of buttonSelectors) {
-        const buttons = Array.from(document.querySelectorAll(sel)).filter(isVisible);
-        for (const btn of buttons) {
-            if (!btn.disabled) {
-                btn.focus();
-                btn.click();
-                return true;
-            }
+    for (const sel of btnSelectors) {
+        const btns = Array.from(document.querySelectorAll(sel)).filter(isEnabled);
+        if (btns.length > 0) {
+            btns[0].focus();
+            btns[0].click();
+            return 'btn:' + sel;
         }
     }
 
+    // Enter キーで送信
     const input = document.querySelector('#ask-input[contenteditable=""true""]')
         || document.querySelector('#ask-input')
         || document.querySelector('div[contenteditable=""true""][role=""textbox""]')
         || document.querySelector('div[contenteditable=""true""]')
         || document.querySelector('textarea');
 
-    if (!input) return false;
+    if (!input) return 'no-input';
+
     input.focus();
-    const ev = { key: 'Enter', code: 'Enter', which: 13, keyCode: 13, bubbles: true, cancelable: true };
+    const ev = { key: 'Enter', code: 'Enter', which: 13, keyCode: 13,
+                 bubbles: true, cancelable: true };
     input.dispatchEvent(new KeyboardEvent('keydown', ev));
     input.dispatchEvent(new KeyboardEvent('keypress', ev));
     input.dispatchEvent(new KeyboardEvent('keyup', ev));
-    return true;
+    return 'enter-key';
 })();";
 
-            return await ExecScriptBoolAsync(webView, script);
+            string resultJson = await webView.ExecuteScriptAsync(script);
+            string result = string.Empty;
+            try { result = JsonSerializer.Deserialize<string>(resultJson) ?? string.Empty; }
+            catch { result = resultJson?.Trim('"') ?? string.Empty; }
+
+            Log($"[PerplexitySend] result='{result}'");
+            return !string.IsNullOrWhiteSpace(result) && result != "no-input";
         }
 
         public override async Task<string> ExtractLatestAsync(WebView2 webView)
@@ -188,74 +256,52 @@ namespace gironWin
 
     function extractFullText(root) {
         if (!root) return '';
-
-        // TreeWalkerで全テキストノードを走査（サブツリーを重複なく順に取得）
         const walker = document.createTreeWalker(
             root,
             NodeFilter.SHOW_TEXT,
             {
                 acceptNode(node) {
-                    // 非表示要素内のテキストは除外
                     if (!isVisible(node.parentElement)) return NodeFilter.FILTER_REJECT;
                     const t = (node.nodeValue || '').trim();
                     if (!t) return NodeFilter.FILTER_REJECT;
-                    // citation系の数字やドメイン名（短い断片）は除外
                     if (t.length <= 2 && /^\d+$/.test(t)) return NodeFilter.FILTER_REJECT;
                     return NodeFilter.FILTER_ACCEPT;
                 }
             }
         );
-
         const parts = [];
-        let prev = '';
         let n;
         while ((n = walker.nextNode())) {
             const val = (n.nodeValue || '').trim();
             if (!val) continue;
-
-            // ブロック要素の後なら改行を入れる
-            const parent = n.parentElement;
-            const tag = parent?.tagName?.toLowerCase() || '';
-            const isBlock = ['p','h1','h2','h3','h4','h5','h6','li','blockquote','pre','div'].includes(tag);
-
-            if (isBlock && parts.length > 0 && prev !== '\n') {
-                parts.push('\n');
-            }
+            const tag = (n.parentElement?.tagName || '').toLowerCase();
+            const isBlock = ['p','h1','h2','h3','h4','h5','h6',
+                             'li','blockquote','pre','div'].includes(tag);
+            if (isBlock && parts.length > 0) parts.push('\n');
             parts.push(val);
-            prev = val;
         }
-
         return norm(parts.join(' ')
             .replace(/ \n /g, '\n')
             .replace(/\n +/g, '\n'));
     }
 
-    // 最新の markdown-content-* を取得
     const mdContainers = Array.from(
         document.querySelectorAll('div[id^=""markdown-content-""]')
     ).filter(isVisible);
-
     if (mdContainers.length > 0) {
-        // 最後のコンテナ = 最新の回答
-        const latest = mdContainers[mdContainers.length - 1];
-        const text = extractFullText(latest);
+        const text = extractFullText(mdContainers[mdContainers.length - 1]);
         if (text) return JSON.stringify(text);
     }
 
-    // フォールバック1: .prose を最後から試す
-    const proseNodes = Array.from(document.querySelectorAll('.prose'))
-        .filter(isVisible);
+    const proseNodes = Array.from(document.querySelectorAll('.prose')).filter(isVisible);
     if (proseNodes.length > 0) {
         const texts = proseNodes.map(n => extractFullText(n)).filter(Boolean);
         if (texts.length > 0) return JSON.stringify(norm(texts.join('\n\n')));
     }
 
-    // フォールバック2: data-renderer=lm を探す
-    const lmNodes = Array.from(document.querySelectorAll('[data-renderer=""lm""]'))
-        .filter(isVisible);
+    const lmNodes = Array.from(document.querySelectorAll('[data-renderer=""lm""]')).filter(isVisible);
     if (lmNodes.length > 0) {
-        const latest = lmNodes[lmNodes.length - 1];
-        const text = extractFullText(latest);
+        const text = extractFullText(lmNodes[lmNodes.length - 1]);
         if (text) return JSON.stringify(text);
     }
 
@@ -268,16 +314,10 @@ namespace gironWin
         {
             string script = @"
 (() => {
-    const stopBtn = document.querySelector(
-        'button[aria-label=""Stop""], button[aria-label*=""Stop""]'
-    );
-    if (stopBtn) return true;
-
-    const loading = document.querySelector(
-        '.animate-pulse, [data-generating=""true""], [aria-busy=""true""]'
-    );
-    if (loading) return true;
-
+    if (document.querySelector('button[aria-label=""Stop""], button[aria-label*=""Stop""]'))
+        return true;
+    if (document.querySelector('.animate-pulse,[data-generating=""true""],[aria-busy=""true""]'))
+        return true;
     return false;
 })();";
             return await ExecScriptBoolAsync(webView, script);

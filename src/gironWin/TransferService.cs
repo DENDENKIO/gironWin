@@ -2,6 +2,7 @@ using Microsoft.Web.WebView2.Wpf;
 using System;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
+using System.Windows;
 
 namespace gironWin
 {
@@ -30,7 +31,12 @@ namespace gironWin
             for (int i = 0; i < waitMs.Length; i++)
             {
                 if (waitMs[i] > 0) await Task.Delay(waitMs[i]);
-                bool ok = await adapter.SetInputAsync(webView, text);
+
+                // ★ WebView2 操作は必ず UI スレッドで行う (Dispatcher.InvokeAsync + Unwrap)
+                bool ok = await Application.Current.Dispatcher.InvokeAsync(() =>
+                    adapter.SetInputAsync(webView, text)
+                ).Task.Unwrap();
+
                 Log($"[SetInput] {adapter.SiteName} attempt={i + 1} result={ok}");
                 if (ok) return true;
             }
@@ -46,7 +52,12 @@ namespace gironWin
             for (int i = 0; i < waitMs.Length; i++)
             {
                 await Task.Delay(waitMs[i]);
-                bool ok = await adapter.SendAsync(webView);
+
+                // ★ WebView2 操作は必ず UI スレッドで行う
+                bool ok = await Application.Current.Dispatcher.InvokeAsync(() =>
+                    adapter.SendAsync(webView)
+                ).Task.Unwrap();
+
                 Log($"[Send] {siteName} attempt={i + 1} result={ok}");
                 if (ok) return true;
 
@@ -79,7 +90,10 @@ namespace gironWin
 
             if (string.IsNullOrWhiteSpace(text))
             {
-                text = await sourceAdapter.GetSelectedTextAsync(sourceWebView);
+                // ★ GetSelectedTextAsync も UI スレッドで
+                text = await Application.Current.Dispatcher.InvokeAsync(() =>
+                    sourceAdapter.GetSelectedTextAsync(sourceWebView)
+                ).Task.Unwrap();
                 Log($"[Transfer] SelectedText.Length={text?.Length ?? 0}");
             }
             else
@@ -118,7 +132,8 @@ namespace gironWin
                 Status = submit ? "送信完了" : "入力完了"
             };
 
-            _records.Insert(0, record);
+            // ★ ObservableCollection への Insert も UI スレッドで行う
+            Application.Current.Dispatcher.Invoke(() => _records.Insert(0, record));
 
             return TransferResult.Ok(submit
                 ? $"{targetAdapter.SiteName} に送信しました。"
