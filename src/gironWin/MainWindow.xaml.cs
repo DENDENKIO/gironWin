@@ -162,7 +162,7 @@ namespace gironWin
 
             // サービス初期化
             _approvalQueue   = new ApprovalQueue();
-            _transferService = new TransferService(_adapterResolver);
+            _transferService = new TransferService(_adapterResolver, _turnRecords);
             _debateService   = new AutoDebateService(
                 _transferService, _approvalQueue, _adapterResolver, _logRepository);
 
@@ -306,7 +306,7 @@ namespace gironWin
         private void ApprovalQueue_ApprovalRequested(object? sender, ApprovalRequestedEventArgs e)
             => Dispatcher.Invoke(() =>
             {
-                ApprovalTitleLabel.Text    = $"承認待ち: Turn {e.TurnNumber}";
+                ApprovalTitleLabel.Text    = "承認待ち";
                 ApprovalDirectionLabel.Text = e.Direction;
                 ApprovalTextBox.Text       = e.Text;
                 ApprovalPanel.Visibility   = Visibility.Visible;
@@ -332,8 +332,8 @@ namespace gironWin
         {
             if (TurnLogListBox.SelectedItem is TransferRecord rec)
             {
-                var win = new TextPreviewWindow(rec.Text, $"Turn {rec.TurnNumber} [{rec.Direction}]")
-                { Owner = this };
+                var win = new TextPreviewWindow(rec.Text)
+                { Owner = this, Title = $"Turn {rec.TurnNumber} [{rec.Direction}]" };
                 win.Show();
             }
         }

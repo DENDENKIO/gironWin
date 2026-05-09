@@ -362,9 +362,26 @@ namespace gironWin
         private static string GetRoleLabel(TurnPolicy policy, int phase, bool isLeft)
         {
             if (policy == TurnPolicy.CritiqueThenRefine)
-                return phase % 3 switch { 0 => " 提案", 1 => " 批判", 2 => " 改善", _ => "" };
+            {
+                return (phase % 3) switch
+                {
+                    0 => " \u63d0\u6848",
+                    1 => " \u6279\u5224",
+                    2 => " \u6539\u5584",
+                    _ => ""
+                };
+            }
             if (policy == TurnPolicy.ResearchReviewLoop)
-                return phase % 4 switch { 0 => " 仮説", 1 => " 証明案", 2 => " 反例", 3 => " 査読", _ => "" };
+            {
+                return (phase % 4) switch
+                {
+                    0 => " \u4eee\u8aac",
+                    1 => " \u8a3c\u660e\u6848",
+                    2 => " \u53cd\u4f8b",
+                    3 => " \u67fb\u8aad",
+                    _ => ""
+                };
+            }
             return string.Empty;
         }
 

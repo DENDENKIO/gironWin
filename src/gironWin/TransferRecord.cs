@@ -21,6 +21,15 @@ namespace gironWin
         public string Direction  { get; set; } = string.Empty;
         public string Text       { get; set; } = string.Empty;
 
+        public System.DateTime Timestamp       { get; set; } = System.DateTime.Now;
+        public string TimestampText             => Timestamp.ToString("HH:mm:ss");
+        public string SourceSite               { get; set; } = string.Empty;
+        public string TargetSite               { get; set; } = string.Empty;
+        public bool   Submitted                { get; set; }
+        public string Status                   { get; set; } = string.Empty;
+        public string ParticipantRole          { get; set; } = string.Empty;
+        public string SessionId                { get; set; } = string.Empty;
+
         /// <summary>FR-11: 1行要約（Phase 3 SummaryService が自動生成）</summary>
         public string Summary    { get; set; } = string.Empty;
 
