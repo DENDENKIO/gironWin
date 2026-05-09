@@ -17,7 +17,9 @@ namespace gironWin
         private TransferService _transferService = null!;
         private AutoDebateService _autoDebateService = null!;
         private readonly ApprovalQueue _approvalQueue = new();
-        private readonly SessionRepository _sessionRepository = new();
+        private SessionRepository _sessionRepo = null!;
+        private readonly LoopDetector _loopLeft  = new();
+        private readonly LoopDetector _loopRight = new();
 
         public ObservableCollection<TransferRecord> TransferRecords => _transferRecords;
 
@@ -30,6 +32,7 @@ namespace gironWin
 
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
+            _sessionRepo    = new SessionRepository();
             _transferService = new TransferService(_adapterResolver, _transferRecords);
             _transferService.DebugLog += (_, msg) =>
             {
@@ -40,17 +43,36 @@ namespace gironWin
                 });
             };
 
-            _autoDebateService = new AutoDebateService(
-                _transferService, _approvalQueue, _adapterResolver, _sessionRepository);
+            _autoDebateService = new AutoDebateService(_transferService, _approvalQueue, _adapterResolver);
+            _autoDebateService.StatusChanged  += (_, msg)  => Dispatcher.Invoke(() => SetStatus(msg));
+            _autoDebateService.TurnAdvanced   += (_, turn) => Dispatcher.Invoke(() => TurnCountTextBlock.Text = $"ターン: {turn}");
+            _autoDebateService.DebateStopped  += (_, _)    => Dispatcher.Invoke(() => UpdateDebateButtons(false));
 
-            _autoDebateService.StatusChanged += (_, msg) => Dispatcher.Invoke(() => SetStatus(msg));
-            _autoDebateService.TurnAdvanced  += (_, turn) => Dispatcher.Invoke(() => TurnCountTextBlock.Text = $"ターン: {turn}");
-            _autoDebateService.DebateStopped += (_, _)    => Dispatcher.Invoke(() => UpdateDebateButtons(false));
-            _autoDebateService.LoopDetected  += (_, msg)  => Dispatcher.Invoke(() =>
+            // ターン完了時にセッション保存 + ループ検知
+            _autoDebateService.TurnAdvanced += async (_, turn) =>
             {
-                UpdateDebateButtons(false);
-                MessageBox.Show(msg, "ループ検知", MessageBoxButton.OK, MessageBoxImage.Warning);
-            });
+                // 最後の TransferRecord 2件（左・右各最新）を保存
+                await Dispatcher.InvokeAsync(async () =>
+                {
+                    if (_transferRecords.Count == 0) return;
+                    var last = _transferRecords[_transferRecords.Count - 1];
+                    await _sessionRepo.AppendAsync(turn, last.Direction ?? "", last.Text ?? "");
+
+                    // ループ検知
+                    bool isLeft = last.Direction?.Contains("左") == true;
+                    var detector = isLeft ? _loopLeft : _loopRight;
+                    if (detector.AddAndCheck(last.Text ?? ""))
+                    {
+                        _autoDebateService.Stop();
+                        UpdateDebateButtons(false);
+                        MessageBox.Show(
+                            $"ループを検知したため自動討論を停止しました。\n(ターン{turn}\u3001方向: {last.Direction})",
+                            "ループ検知",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                    }
+                });
+            };
 
             foreach (var adapter in _adapterResolver.Adapters)
             {
@@ -151,8 +173,13 @@ namespace gironWin
             }
 
             var result = await _transferService.TransferAsync(
-                sourceWebView, targetWebView, sourceUrl, targetUrl,
-                submit, AppendBridge, overrideText);
+                sourceWebView,
+                targetWebView,
+                sourceUrl,
+                targetUrl,
+                submit,
+                AppendBridge,
+                overrideText);
 
             SetStatus(result.Message);
         }
@@ -169,14 +196,19 @@ namespace gironWin
                 return;
             }
 
-            string? text = await ConfirmTextAsync(record.Text, $"履歴再利用 - {record.Direction}");
+            string? text = await ConfirmTextAsync(
+                record.Text,
+                $"履歴再利用 - {record.Direction}");
+
             if (text == null)
             {
                 SetStatus("履歴再利用をキャンセルしました。");
                 return;
             }
 
-            var result = await _transferService.ReuseAsync(record, targetWebView, targetUrl, submit, text);
+            var result = await _transferService.ReuseAsync(
+                record, targetWebView, targetUrl, submit, text);
+
             SetStatus(result.Message);
         }
 
@@ -237,7 +269,12 @@ namespace gironWin
         private void OpenHistoryPreview(TransferRecord? record)
         {
             if (record == null) { SetStatus("履歴が選択されていません。"); return; }
-            var win = new TextPreviewWindow(record.Text) { Owner = this, Title = $"履歴詳細 - {record.Direction}" };
+
+            var win = new TextPreviewWindow(record.Text)
+            {
+                Owner = this,
+                Title = $"履歴詳細 - {record.Direction}"
+            };
             win.ShowDialog();
             SetStatus($"履歴詳細: {record.Direction}");
         }
@@ -276,6 +313,13 @@ namespace gironWin
         private void StartAutoDebateButton_Click(object sender, RoutedEventArgs e)
         {
             if (_autoDebateService.IsRunning) return;
+
+            // ループ検知リセット
+            _loopLeft.Reset();
+            _loopRight.Reset();
+
+            // 新セッション開始
+            _sessionRepo.StartNewSession();
 
             int maxTurns = 0;
             if (!string.IsNullOrWhiteSpace(MaxTurnsTextBox.Text))
@@ -323,27 +367,27 @@ namespace gironWin
         private void UpdateDebateButtons(bool running)
         {
             StartAutoDebateButton.IsEnabled = !running;
-            StopAutoDebateButton.IsEnabled = running;
-            PauseResumeButton.IsEnabled = running;
+            StopAutoDebateButton.IsEnabled  = running;
+            PauseResumeButton.IsEnabled     = running;
             if (!running) PauseResumeButton.Content = "一時停止";
         }
 
         // ---------------------------------------------------------------
-        // エクスポート
+        // ★ エクスポートボタン
         // ---------------------------------------------------------------
 
         private async void ExportMarkdownButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                string path = await _sessionRepository.ExportMarkdownAsync();
-                SetStatus($"Markdown 保存完了: {path}");
-                // エクスプローラーでフォルダを開く
-                Process.Start("explorer.exe", $"/select,\"{path}\"");
+                string path = await _sessionRepo.ExportMarkdownAsync();
+                SetStatus($"Markdown 保存完了: {Path.GetFileName(path)}");
+                RevealInExplorer(path);
             }
             catch (Exception ex)
             {
-                SetStatus($"Markdown エクスポート失敗: {ex.Message}");
+                MessageBox.Show($"Markdown 保存に失敗しました。\n{ex.Message}",
+                    "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -351,24 +395,37 @@ namespace gironWin
         {
             try
             {
-                string path = await _sessionRepository.ExportJsonAsync();
-                SetStatus($"JSON 保存完了: {path}");
-                Process.Start("explorer.exe", $"/select,\"{path}\"");
+                string path = await _sessionRepo.ExportJsonAsync();
+                SetStatus($"JSON 保存完了: {Path.GetFileName(path)}");
+                RevealInExplorer(path);
             }
             catch (Exception ex)
             {
-                SetStatus($"JSON エクスポート失敗: {ex.Message}");
+                MessageBox.Show($"JSON 保存に失敗しました。\n{ex.Message}",
+                    "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
         private void OpenSessionFolderButton_Click(object sender, RoutedEventArgs e)
         {
-            string dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "gironWin", "sessions");
-            Directory.CreateDirectory(dir);
-            Process.Start("explorer.exe", dir);
-            SetStatus($"セッションフォルダを開きました: {dir}");
+            string folder = _sessionRepo.SessionFolder;
+            Directory.CreateDirectory(folder);
+            Process.Start(new ProcessStartInfo
+            {
+                FileName        = folder,
+                UseShellExecute = true
+            });
+            SetStatus($"フォルダを開きました: {folder}");
+        }
+
+        private static void RevealInExplorer(string filePath)
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName  = "explorer.exe",
+                Arguments = $"/select,\"{filePath}\"",
+                UseShellExecute = true
+            });
         }
     }
 }

@@ -4,92 +4,85 @@ using System.Collections.Generic;
 namespace gironWin
 {
     /// <summary>
-    /// 同一・類似メッセージの無限ループを検知する。
-    /// 仕様書 Phase 2「ループ検知」対応。
+    /// 自動討論のループを検知する。<br/>
+    /// ・完全一致: 直前と同じテキストが 2 回連続 → ループ<br/>
+    /// ・類似度: Dice バイグラム係数が 92% 以上で 3 回連続 → ループ
     /// </summary>
-    public sealed class LoopDetector
+    public class LoopDetector
     {
-        // ── 設定 ──────────────────────────────────────────
-        /// <summary>直近何件を比較対象とするか</summary>
-        public int WindowSize { get; set; } = 4;
+        private const int    SimilarWindowSize = 3;
+        private const double SimilarThreshold  = 0.92;
+        private const int    CompareLength     = 500;
 
-        /// <summary>連続完全一致が何回続いたら検知とするか</summary>
-        public int ExactRepeatThreshold { get; set; } = 2;
-
-        /// <summary>類似度がこの値以上なら「類似」とみなす (0.0〜1.0)</summary>
-        public double SimilarityThreshold { get; set; } = 0.92;
-
-        /// <summary>類似が何回続いたら検知とするか</summary>
-        public int SimilarRepeatThreshold { get; set; } = 3;
-        // ──────────────────────────────────────────────────
-
+        private string _prevText = string.Empty;
         private readonly Queue<string> _window = new();
 
-        /// <summary>テキストを追加し、ループを検知したら true を返す。</summary>
+        public void Reset()
+        {
+            _prevText = string.Empty;
+            _window.Clear();
+        }
+
+        /// <summary>
+        /// テキストを追加しループかどうかを判定する。true の場合ループ。
+        /// </summary>
         public bool AddAndCheck(string text)
         {
-            if (string.IsNullOrWhiteSpace(text)) return false;
+            string snippet = Clip(text);
 
-            _window.Enqueue(text);
-            while (_window.Count > WindowSize)
+            // 完全一致チェック
+            if (!string.IsNullOrWhiteSpace(_prevText) &&
+                string.Equals(snippet, Clip(_prevText), StringComparison.Ordinal))
+            {
+                _prevText = text;
+                return true;
+            }
+
+            _prevText = text;
+
+            // 類似度ウィンドウ
+            _window.Enqueue(snippet);
+            if (_window.Count > SimilarWindowSize)
                 _window.Dequeue();
 
-            if (_window.Count < 2) return false;
-
-            var items = new List<string>(_window);
-
-            // ── 完全一致チェック ──
-            int exactCount = 1;
-            for (int i = items.Count - 2; i >= 0; i--)
+            if (_window.Count == SimilarWindowSize)
             {
-                if (items[i] == items[^1])
-                    exactCount++;
-                else
-                    break;
+                var arr = _window.ToArray();
+                bool allSimilar = true;
+                for (int i = 1; i < arr.Length; i++)
+                {
+                    if (DiceBigram(arr[0], arr[i]) < SimilarThreshold)
+                    {
+                        allSimilar = false;
+                        break;
+                    }
+                }
+                if (allSimilar) return true;
             }
-            if (exactCount >= ExactRepeatThreshold) return true;
-
-            // ── 類似度チェック ──
-            int similarCount = 1;
-            for (int i = items.Count - 2; i >= 0; i--)
-            {
-                double sim = ComputeSimilarity(items[i], items[^1]);
-                if (sim >= SimilarityThreshold)
-                    similarCount++;
-                else
-                    break;
-            }
-            if (similarCount >= SimilarRepeatThreshold) return true;
 
             return false;
         }
 
-        public void Reset() => _window.Clear();
+        private static string Clip(string s) =>
+            s.Length <= CompareLength ? s : s.Substring(0, CompareLength);
 
-        // ── Dice 係数（バイグラム）による類似度 ──
-        private static double ComputeSimilarity(string a, string b)
+        private static double DiceBigram(string a, string b)
         {
             if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return 0;
-            if (a == b) return 1.0;
-
-            var setA = GetBigrams(a);
-            var setB = GetBigrams(b);
-            if (setA.Count == 0 || setB.Count == 0) return 0;
+            var setA = Bigrams(a);
+            var setB = Bigrams(b);
 
             int intersection = 0;
             foreach (var bg in setA)
-            {
                 if (setB.Contains(bg)) intersection++;
-            }
-            return 2.0 * intersection / (setA.Count + setB.Count);
+
+            return (2.0 * intersection) / (setA.Count + setB.Count);
         }
 
-        private static HashSet<string> GetBigrams(string s)
+        private static HashSet<string> Bigrams(string s)
         {
             var set = new HashSet<string>();
-            // 比較コストを下げるため先頭500文字だけ使う
-            int len = Math.Min(s.Length, 500);
-            for (int i = 0; i + 1 < len; i++)
+            for (int i = 0; i < s.Length - 1; i++)
                 set.Add(s.Substring(i, 2));
             return set;
         }
