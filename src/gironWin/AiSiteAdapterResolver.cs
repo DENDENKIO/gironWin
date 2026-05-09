@@ -11,7 +11,9 @@ namespace gironWin
             new GeminiAdapter()
         };
 
-        public IAiSiteAdapter Resolve(string url)
+        public IReadOnlyList<IAiSiteAdapter> Adapters => _adapters;
+
+        public IAiSiteAdapter? Resolve(string url)
         {
             return _adapters.FirstOrDefault(x => x.CanHandle(url));
         }

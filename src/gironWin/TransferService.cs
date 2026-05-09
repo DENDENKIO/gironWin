@@ -22,10 +22,22 @@ namespace gironWin
 
         private void Log(string message) => DebugLog?.Invoke(this, message);
 
+        // SetInputAsync 失敗時に最大3回リトライ（0秒・1秒・3秒後）
+        private async Task<bool> TrySetInputWithRetryAsync(
+            IAiSiteAdapter adapter, WebView2 webView, string text)
+        {
+            int[] waitMs = { 0, 1000, 3000 };
+            for (int i = 0; i < waitMs.Length; i++)
+            {
+                if (waitMs[i] > 0) await Task.Delay(waitMs[i]);
+                bool ok = await adapter.SetInputAsync(webView, text);
+                Log($"[SetInput] {adapter.SiteName} attempt={i + 1} result={ok}");
+                if (ok) return true;
+            }
+            return false;
+        }
+
         // ★ SendAsync を最大3回試みるヘルパー
-        //   1回目: SetInput直後 600ms待ち
-        //   2回目: 3秒後
-        //   3回目: 10秒後（最終）
         private async Task<bool> TrySendWithRetryAsync(
             IAiSiteAdapter adapter, WebView2 webView, string siteName)
         {
@@ -84,11 +96,9 @@ namespace gironWin
             Log($"[Transfer] FinalText.Length={text.Length}");
             Log($"[Transfer] FinalText.Preview={(text.Length > 120 ? text[..120] : text)}");
 
-            bool inputOk = await targetAdapter.SetInputAsync(targetWebView, text);
-            Log($"[Transfer] SetInputAsync={inputOk}");
-
+            bool inputOk = await TrySetInputWithRetryAsync(targetAdapter, targetWebView, text);
             if (!inputOk)
-                return TransferResult.Fail($"入力欄への設定に失敗しました。Target={targetAdapter.SiteName}");
+                return TransferResult.Fail($"入力欄への設定に失敗しました（3回試行）。Target={targetAdapter.SiteName}");
 
             if (submit)
             {
@@ -132,11 +142,9 @@ namespace gironWin
 
             Log($"[Reuse] Target={targetAdapter.SiteName}, Submit={submit}, Length={text.Length}");
 
-            bool inputOk = await targetAdapter.SetInputAsync(targetWebView, text);
-            Log($"[Reuse] SetInputAsync={inputOk}");
-
+            bool inputOk = await TrySetInputWithRetryAsync(targetAdapter, targetWebView, text);
             if (!inputOk)
-                return TransferResult.Fail($"入力欄への設定に失敗しました。Target={targetAdapter.SiteName}");
+                return TransferResult.Fail($"入力欄への設定に失敗しました（3回試行）。Target={targetAdapter.SiteName}");
 
             if (submit)
             {

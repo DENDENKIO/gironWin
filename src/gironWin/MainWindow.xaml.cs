@@ -41,6 +41,22 @@ namespace gironWin
             _autoDebateService.TurnAdvanced += (_, turn) => Dispatcher.Invoke(() => TurnCountTextBlock.Text = $"ターン: {turn}");
             _autoDebateService.DebateStopped += (_, _) => Dispatcher.Invoke(() => UpdateDebateButtons(false));
 
+            // GeminiAdapter の DebugLog を TransferService と同じログ出力先に繋ぐ
+            foreach (var adapter in _adapterResolver.Adapters)
+            {
+                if (adapter is GeminiAdapter gemini)
+                {
+                    gemini.DebugLog += (s, msg) =>
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            StatusTextBlock.Text = msg;
+                            System.Diagnostics.Debug.WriteLine(msg);
+                        });
+                    };
+                }
+            }
+
             await InitializeWebViewsAsync();
             SetStatus("準備完了。");
         }
