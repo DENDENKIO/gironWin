@@ -41,11 +41,9 @@ namespace gironWin
         public void Start(AutoDebateConfig config)
         {
             if (IsRunning) return;
-
             _cts = new CancellationTokenSource();
             _isPaused = false;
             _pauseTcs = null;
-
             _ = RunLoopAsync(config, _cts.Token);
         }
 
@@ -86,6 +84,7 @@ namespace gironWin
             {
                 while (!ct.IsCancellationRequested)
                 {
+                    // ── 一時停止チェック ──
                     if (_isPaused)
                     {
                         NotifyStatus("一時停止中... 再開ボタンを押してください。");
@@ -97,12 +96,10 @@ namespace gironWin
                     TurnAdvanced?.Invoke(this, turn);
 
                     bool isLeftTurn = direction == DebateDirection.LeftToRight;
-
                     var srcWebView = isLeftTurn ? config.LeftWebView : config.RightWebView;
                     var tgtWebView = isLeftTurn ? config.RightWebView : config.LeftWebView;
-
-                    string srcUrl = isLeftTurn ? config.LeftUrl : config.RightUrl;
-                    string tgtUrl = isLeftTurn ? config.RightUrl : config.LeftUrl;
+                    string srcUrl  = isLeftTurn ? config.LeftUrl  : config.RightUrl;
+                    string tgtUrl  = isLeftTurn ? config.RightUrl : config.LeftUrl;
 
                     var srcAdapter = _adapterResolver.Resolve(srcUrl);
                     var tgtAdapter = _adapterResolver.Resolve(tgtUrl);
@@ -127,8 +124,8 @@ namespace gironWin
                             config.GenerationTimeoutMs,
                             ct);
 
-                        // 確定後に少し待って最終全文を再取得（Perplexity 等の複数ブロック対策）
-                        await Task.Delay(400, ct);
+                        // ★ 確定後の再取得待機を 400ms → 100ms に短縮
+                        await Task.Delay(100, ct);
                         generatedText = (await srcAdapter.ExtractLatestAsync(srcWebView))?.Trim() ?? generatedText;
                     }
                     catch (OperationCanceledException)
@@ -141,7 +138,7 @@ namespace gironWin
                     if (string.IsNullOrWhiteSpace(generatedText) || generatedText == snapshot)
                     {
                         NotifyStatus($"ターン {turn}: 新規テキストを検出できませんでした。再試行します。");
-                        await Task.Delay(1500, ct);
+                        await Task.Delay(1000, ct);
                         turn--;
                         continue;
                     }
@@ -156,7 +153,6 @@ namespace gironWin
                     if (config.RequireApproval)
                     {
                         NotifyStatus($"ターン {turn}: 承認待ち...");
-
                         try
                         {
                             var result = await _approvalQueue.EnqueueAsync(
@@ -171,7 +167,6 @@ namespace gironWin
                                 NotifyStatus($"ターン {turn}: 却下されました。停止します。");
                                 break;
                             }
-
                             transferText = result.Text;
                         }
                         catch (OperationCanceledException)
@@ -199,15 +194,16 @@ namespace gironWin
 
                     NotifyStatus($"ターン {turn}: 送信完了。");
 
+                    // ★ ① 修正: direction を切り替えてから MaxTurns チェック
+                    direction = direction == DebateDirection.LeftToRight
+                        ? DebateDirection.RightToLeft
+                        : DebateDirection.LeftToRight;
+
                     if (config.MaxTurns > 0 && turn >= config.MaxTurns)
                     {
                         NotifyStatus($"最大ターン数 {config.MaxTurns} に到達。自動討論終了。");
                         break;
                     }
-
-                    direction = direction == DebateDirection.LeftToRight
-                        ? DebateDirection.RightToLeft
-                        : DebateDirection.LeftToRight;
 
                     await Task.Delay(config.TurnIntervalMs, ct);
                 }
@@ -237,7 +233,7 @@ namespace gironWin
         public bool AppendBridge { get; set; }
         public bool RequireApproval { get; set; } = true;
         public int MaxTurns { get; set; }
-        public int TurnIntervalMs { get; set; } = 500;
+        public int TurnIntervalMs { get; set; } = 200;   // ★ デフォルト短縮
         public int GenerationTimeoutMs { get; set; } = 45000;
     }
 }

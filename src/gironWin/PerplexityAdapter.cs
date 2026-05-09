@@ -21,18 +21,13 @@ namespace gironWin
 
             string escapedText = JsonSerializer.Serialize(text);
 
+            // ★ 修正版:
+            //   1. DataTransfer API（clipboard write 相当）で insertText
+            //   2. 失敗したら execCommand('insertText') にフォールバック
+            //   3. textContent への直接代入は使わない（Reactがリセットするため）
             string script = $@"
-(() => {{
+(async () => {{
     const text = {escapedText};
-
-    const selectors = [
-        '#ask-input[contenteditable=""true""]',
-        '#ask-input',
-        'div[contenteditable=""true""][role=""textbox""]',
-        'div[role=""textbox""][contenteditable=""true""]',
-        'div[contenteditable=""true""]',
-        'textarea'
-    ];
 
     function isVisible(el) {{
         if (!el) return false;
@@ -40,53 +35,86 @@ namespace gironWin
         return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null;
     }}
 
-    function setEditable(el, value) {{
+    function findInput() {{
+        const candidates = [
+            '#ask-input[contenteditable=""true""]',
+            '#ask-input',
+            'div[contenteditable=""true""][role=""textbox""]',
+            'div[role=""textbox""][contenteditable=""true""]',
+            'div[contenteditable=""true""]',
+            'textarea'
+        ];
+        for (const sel of candidates) {{
+            const nodes = Array.from(document.querySelectorAll(sel)).filter(isVisible);
+            if (nodes.length > 0) return nodes[0];
+        }}
+        return null;
+    }}
+
+    // ---- contenteditable への確実な挿入 ----
+    async function insertIntoEditable(el, value) {{
         el.focus();
+
+        // 全選択して削除
         try {{
             document.execCommand('selectAll', false, null);
             document.execCommand('delete', false, null);
-        }} catch(e) {{
-            el.textContent = '';
-        }}
-        let inserted = false;
+        }} catch(e) {{}}
+
+        // DataTransfer を使った貼り付け（最も確実）
         try {{
-            inserted = document.execCommand('insertText', false, value);
-        }} catch(e) {{
-            inserted = false;
-        }}
-        if (!inserted) el.textContent = value;
-        el.dispatchEvent(new InputEvent('input', {{
-            bubbles: true,
-            inputType: 'insertText',
-            data: value
-        }}));
+            const dt = new DataTransfer();
+            dt.setData('text/plain', value);
+            const pasteEvent = new ClipboardEvent('paste', {{
+                bubbles: true,
+                cancelable: true,
+                clipboardData: dt
+            }});
+            el.dispatchEvent(pasteEvent);
+
+            // 貼り付け後に内容を確認
+            await new Promise(r => setTimeout(r, 80));
+            const current = (el.innerText || el.textContent || '').trim();
+            if (current.length >= Math.min(value.length, 20)) {{
+                el.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: value }}));
+                return true;
+            }}
+        }} catch(e) {{}}
+
+        // フォールバック: execCommand('insertText')
+        try {{
+            document.execCommand('selectAll', false, null);
+            const ok = document.execCommand('insertText', false, value);
+            if (ok) {{
+                await new Promise(r => setTimeout(r, 50));
+                el.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: value }}));
+                return true;
+            }}
+        }} catch(e) {{}}
+
+        return false;
+    }}
+
+    function insertIntoTextarea(el, value) {{
+        const proto = Object.getPrototypeOf(el);
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (setter) setter.call(el, value);
+        else el.value = value;
+        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
         el.dispatchEvent(new Event('change', {{ bubbles: true }}));
         return true;
     }}
 
-    function setControl(el, value) {{
-        if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {{
-            const proto = Object.getPrototypeOf(el);
-            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-            if (setter) setter.call(el, value);
-            else el.value = value;
-            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-            return true;
-        }}
-        if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {{
-            return setEditable(el, value);
-        }}
-        return false;
-    }}
+    const el = findInput();
+    if (!el) return false;
 
-    for (const sel of selectors) {{
-        const nodes = Array.from(document.querySelectorAll(sel)).filter(isVisible);
-        for (const el of nodes) {{
-            if (setControl(el, text)) return true;
-        }}
+    el.focus();
+    await new Promise(r => setTimeout(r, 60));
+
+    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {{
+        return insertIntoTextarea(el, text);
     }}
-    return false;
+    return await insertIntoEditable(el, text);
 }})();";
 
             return await ExecScriptBoolAsync(webView, script);
@@ -211,7 +239,7 @@ namespace gironWin
         // 最後のコンテナ = 最新の回答
         const latest = mdContainers[mdContainers.length - 1];
         const text = extractFullText(latest);
-        if (text) return text;
+        if (text) return JSON.stringify(text);
     }
 
     // フォールバック1: .prose を最後から試す
@@ -219,7 +247,7 @@ namespace gironWin
         .filter(isVisible);
     if (proseNodes.length > 0) {
         const texts = proseNodes.map(n => extractFullText(n)).filter(Boolean);
-        if (texts.length > 0) return norm(texts.join('\n\n'));
+        if (texts.length > 0) return JSON.stringify(norm(texts.join('\n\n')));
     }
 
     // フォールバック2: data-renderer=lm を探す
@@ -228,10 +256,10 @@ namespace gironWin
     if (lmNodes.length > 0) {
         const latest = lmNodes[lmNodes.length - 1];
         const text = extractFullText(latest);
-        if (text) return text;
+        if (text) return JSON.stringify(text);
     }
 
-    return '';
+    return JSON.stringify('');
 })();";
             return await ExecScriptStringAsync(webView, script);
         }

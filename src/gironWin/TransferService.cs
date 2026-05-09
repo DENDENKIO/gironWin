@@ -72,12 +72,20 @@ namespace gironWin
             if (!inputOk)
                 return TransferResult.Fail($"入力欄への設定に失敗しました。Target={targetAdapter.SiteName}");
 
-            bool sendOk = true;
             if (submit)
             {
-                await Task.Delay(800);
-                sendOk = await targetAdapter.SendAsync(targetWebView);
+                // ★ SetInput 後、React の状態反映を待つ（800ms → 600ms に短縮）
+                await Task.Delay(600);
+                bool sendOk = await targetAdapter.SendAsync(targetWebView);
                 Log($"[Transfer] SendAsync={sendOk}");
+
+                // ★ SendAsync が false の場合、100ms 待って1回リトライ
+                if (!sendOk)
+                {
+                    await Task.Delay(100);
+                    sendOk = await targetAdapter.SendAsync(targetWebView);
+                    Log($"[Transfer] SendAsync retry={sendOk}");
+                }
 
                 if (!sendOk)
                     return TransferResult.Fail($"送信操作に失敗しました。Target={targetAdapter.SiteName}");
@@ -126,9 +134,16 @@ namespace gironWin
 
             if (submit)
             {
-                await Task.Delay(800);
+                await Task.Delay(600);
                 bool sendOk = await targetAdapter.SendAsync(targetWebView);
                 Log($"[Reuse] SendAsync={sendOk}");
+
+                if (!sendOk)
+                {
+                    await Task.Delay(100);
+                    sendOk = await targetAdapter.SendAsync(targetWebView);
+                    Log($"[Reuse] SendAsync retry={sendOk}");
+                }
 
                 if (!sendOk)
                     return TransferResult.Fail($"送信操作に失敗しました。Target={targetAdapter.SiteName}");
