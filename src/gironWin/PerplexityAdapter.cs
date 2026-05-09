@@ -42,23 +42,19 @@ namespace gironWin
 
     function setEditable(el, value) {{
         el.focus();
-
         try {{
             document.execCommand('selectAll', false, null);
             document.execCommand('delete', false, null);
         }} catch(e) {{
             el.textContent = '';
         }}
-
         let inserted = false;
         try {{
             inserted = document.execCommand('insertText', false, value);
         }} catch(e) {{
             inserted = false;
         }}
-
         if (!inserted) el.textContent = value;
-
         el.dispatchEvent(new InputEvent('input', {{
             bubbles: true,
             inputType: 'insertText',
@@ -74,16 +70,13 @@ namespace gironWin
             const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
             if (setter) setter.call(el, value);
             else el.value = value;
-
             el.dispatchEvent(new Event('input', {{ bubbles: true }}));
             el.dispatchEvent(new Event('change', {{ bubbles: true }}));
             return true;
         }}
-
         if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {{
             return setEditable(el, value);
         }}
-
         return false;
     }}
 
@@ -93,7 +86,6 @@ namespace gironWin
             if (setControl(el, text)) return true;
         }}
     }}
-
     return false;
 }})();";
 
@@ -138,22 +130,11 @@ namespace gironWin
         || document.querySelector('textarea');
 
     if (!input) return false;
-
     input.focus();
-
-    const ev = {
-        key: 'Enter',
-        code: 'Enter',
-        which: 13,
-        keyCode: 13,
-        bubbles: true,
-        cancelable: true
-    };
-
+    const ev = { key: 'Enter', code: 'Enter', which: 13, keyCode: 13, bubbles: true, cancelable: true };
     input.dispatchEvent(new KeyboardEvent('keydown', ev));
     input.dispatchEvent(new KeyboardEvent('keypress', ev));
     input.dispatchEvent(new KeyboardEvent('keyup', ev));
-
     return true;
 })();";
 
@@ -177,73 +158,77 @@ namespace gironWin
         return s.display !== 'none' && s.visibility !== 'hidden';
     }
 
-    function collectTexts(root) {
+    function extractFullText(root) {
         if (!root) return '';
 
-        const blockSelectors = [
-            '.prose',
-            '.markdown',
-            '[data-testid=""answer""]',
-            '[data-testid=""response""]',
-            'p', 'li', 'h1', 'h2', 'h3', 'h4', 'pre', 'code', 'blockquote'
-        ];
-
-        const seen = new Set();
-        const parts = [];
-
-        for (const sel of blockSelectors) {
-            const nodes = Array.from(root.querySelectorAll(sel))
-                .filter(isVisible);
-
-            for (const node of nodes) {
-                const text = norm(node.innerText || node.textContent || '');
-                if (!text) continue;
-                if (seen.has(text)) continue;
-                seen.add(text);
-                parts.push(text);
+        // TreeWalkerで全テキストノードを走査（サブツリーを重複なく順に取得）
+        const walker = document.createTreeWalker(
+            root,
+            NodeFilter.SHOW_TEXT,
+            {
+                acceptNode(node) {
+                    // 非表示要素内のテキストは除外
+                    if (!isVisible(node.parentElement)) return NodeFilter.FILTER_REJECT;
+                    const t = (node.nodeValue || '').trim();
+                    if (!t) return NodeFilter.FILTER_REJECT;
+                    // citation系の数字やドメイン名（短い断片）は除外
+                    if (t.length <= 2 && /^\d+$/.test(t)) return NodeFilter.FILTER_REJECT;
+                    return NodeFilter.FILTER_ACCEPT;
+                }
             }
+        );
+
+        const parts = [];
+        let prev = '';
+        let n;
+        while ((n = walker.nextNode())) {
+            const val = (n.nodeValue || '').trim();
+            if (!val) continue;
+
+            // ブロック要素の後なら改行を入れる
+            const parent = n.parentElement;
+            const tag = parent?.tagName?.toLowerCase() || '';
+            const isBlock = ['p','h1','h2','h3','h4','h5','h6','li','blockquote','pre','div'].includes(tag);
+
+            if (isBlock && parts.length > 0 && prev !== '\n') {
+                parts.push('\n');
+            }
+            parts.push(val);
+            prev = val;
         }
 
-        if (parts.length > 0) {
-            return norm(parts.join('\n\n'));
-        }
-
-        return norm(root.innerText || root.textContent || '');
+        return norm(parts.join(' ')
+            .replace(/ \n /g, '\n')
+            .replace(/\n +/g, '\n'));
     }
 
-    // まず「回答全体コンテナ」を広めに探す
-    const answerContainers = [
-        ...Array.from(document.querySelectorAll('[data-testid=""answer""]')),
-        ...Array.from(document.querySelectorAll('[data-testid=""response""]')),
-        ...Array.from(document.querySelectorAll('main .prose')).map(x => x.closest('article, div')),
-        ...Array.from(document.querySelectorAll('.prose')).map(x => x.closest('article, div'))
-    ].filter(Boolean);
+    // 最新の markdown-content-* を取得
+    const mdContainers = Array.from(
+        document.querySelectorAll('div[id^=""markdown-content-""]')
+    ).filter(isVisible);
 
-    // 重複除去
-    const uniqueContainers = [];
-    const containerSet = new Set();
-    for (const c of answerContainers) {
-        if (!containerSet.has(c)) {
-            containerSet.add(c);
-            uniqueContainers.push(c);
-        }
-    }
-
-    // 後ろから見て、一番新しいコンテナの全文を作る
-    for (let i = uniqueContainers.length - 1; i >= 0; i--) {
-        const container = uniqueContainers[i];
-        const text = collectTexts(container);
+    if (mdContainers.length > 0) {
+        // 最後のコンテナ = 最新の回答
+        const latest = mdContainers[mdContainers.length - 1];
+        const text = extractFullText(latest);
         if (text) return text;
     }
 
-    // フォールバック: 画面上の prose 群を全部つなぐ
-    const proseTexts = Array.from(document.querySelectorAll('.prose'))
-        .filter(isVisible)
-        .map(x => norm(x.innerText || x.textContent || ''))
-        .filter(Boolean);
+    // フォールバック1: .prose を最後から試す
+    const proseNodes = Array.from(document.querySelectorAll('.prose'))
+        .filter(isVisible);
+    if (proseNodes.length > 0) {
+        const texts = proseNodes.map(n => extractFullText(n)).filter(Boolean);
+        if (texts.length > 0) return norm(texts.join('\n\n'));
+    }
 
-    if (proseTexts.length > 0) {
-        return norm(proseTexts.join('\n\n'));
+    // フォールバック2: data-renderer=lm を探す
+    const lmNodes = Array.from(document.querySelectorAll('[data-renderer=""lm""]'))
+        .filter(isVisible);
+    if (lmNodes.length > 0) {
+        const latest = lmNodes[lmNodes.length - 1];
+        const text = extractFullText(latest);
+        if (text) return text;
     }
 
     return '';
