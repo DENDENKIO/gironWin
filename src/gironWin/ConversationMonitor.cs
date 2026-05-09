@@ -10,8 +10,8 @@ namespace gironWin
     /// <summary>
     /// AI 応答の生成完了を監視する。
     /// 主判定: テキスト文字数をリアルタイム監視し、
-    ///         StableQuietMs（デフォルト10秒）増減なしで完了と判断。
-    /// 補助判定: MutationObserver による postMessage。
+    ///         StableQuietMs（デフォルト2秒）増減なしで完了と判断。
+    ///         または IsGeneratingAsync が false になった瞬間を検知。
     /// </summary>
     public sealed class ConversationMonitor : IDisposable
     {
@@ -22,10 +22,11 @@ namespace gironWin
         private bool _disposed;
         private bool _completed;
 
-        private const int PollIntervalMs   = 200;    // ポーリング間隔
-        private const int StableQuietMs    = 10000;  // ★ 文字数が止まってからの静止確認時間（10秒）
-        private const int MinMeaningfulLen = 40;     // 有意テキストの最小文字数
-        private const int ObserverQuietMs  = 300;    // MutationObserver の待機時間
+        private const int PollIntervalMs   = 150;   // 検出頻度アップ
+        private const int StableQuietMs    = 2000;  // 10秒→2秒に短縮
+        private const int MinMeaningfulLen = 20;    // 短い回答も拾う
+        private const int ObserverQuietMs  = 500;   // 安定性重視
+        private const int AfterStopWaitMs  = 800;   // 生成停止後の描画待ち
 
         public ConversationMonitor(IAiSiteAdapter adapter, WebView2 webView)
         {
@@ -113,16 +114,19 @@ namespace gironWin
         {
             string normalizedSnapshot = (snapshot ?? string.Empty).Trim();
 
-            string lastText   = normalizedSnapshot;
-            int    lastLength = lastText.Length;
-
-            // ★ 文字数が最後に変化した時刻
+            string lastText    = normalizedSnapshot;
+            int    lastLength  = lastText.Length;
             DateTime lastChangedAt = DateTime.UtcNow;
-            bool     seenNewText   = false;
+            bool seenNewText   = false;
+            bool wasGenerating = false;
 
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(PollIntervalMs, ct);
+
+                // ★ IsGeneratingAsync() で生成中フラグを確認
+                bool isGenerating = false;
+                try { isGenerating = await _adapter.IsGeneratingAsync(_webView); } catch { }
 
                 string latestText = (await _adapter.ExtractLatestAsync(_webView))?.Trim() ?? string.Empty;
                 bool hasNewText   = !string.IsNullOrWhiteSpace(latestText)
@@ -131,37 +135,46 @@ namespace gironWin
 
                 if (!hasNewText)
                 {
-                    // まだ新テキストが出ていない
-                    lastChangedAt = DateTime.UtcNow; // 生成前はタイマーをリセットし続ける
+                    lastChangedAt = DateTime.UtcNow;
+                    if (isGenerating) wasGenerating = true;
                     continue;
                 }
 
-                // ★ 新テキストが出た
                 seenNewText = true;
+                if (isGenerating) wasGenerating = true;
 
                 bool lengthChanged = latestText.Length != lastLength;
                 bool textChanged   = latestText != lastText;
 
                 if (lengthChanged || textChanged)
                 {
-                    // 文字数または内容が変化 → 変化時刻を更新
                     lastText      = latestText;
                     lastLength    = latestText.Length;
                     lastChangedAt = DateTime.UtcNow;
                     continue;
                 }
 
-                // ★ 変化なし → 静止時間を計測
                 double quietMs = (DateTime.UtcNow - lastChangedAt).TotalMilliseconds;
 
+                // ★ パターン1: IsGenerating が true→false に変わった直後
+                if (wasGenerating && !isGenerating && seenNewText)
+                {
+                    // 少し待ってから取得（描画の遅延を吸収）
+                    await Task.Delay(AfterStopWaitMs, ct);
+                    string finalText = (await _adapter.ExtractLatestAsync(_webView))?.Trim() ?? latestText;
+                    if (!string.IsNullOrWhiteSpace(finalText) && finalText != normalizedSnapshot)
+                    {
+                        onCompleted(finalText);
+                        return;
+                    }
+                }
+
+                // ★ パターン2: StableQuietMs（2秒）テキスト変化なし
                 if (seenNewText && quietMs >= StableQuietMs)
                 {
-                    // 10秒間変化がなければ完了
                     onCompleted(latestText);
                     return;
                 }
-
-                // まだ静止が足りないのでループ継続
             }
         }
 
@@ -224,7 +237,6 @@ namespace gironWin
         const t = getLatestText();
         if (!t || t === SNAPSHOT) return;
 
-        // 文字数が変化したらタイマーリセット
         const len = t.length;
         if (len !== window.__gironLen) {{
             window.__gironLen = len;
@@ -232,7 +244,6 @@ namespace gironWin
             window.__gironTimer = null;
         }}
 
-        // タイマーがなければセット（QUIET_MS 後に通知）
         if (!window.__gironTimer) {{
             window.__gironTimer = setTimeout(() => {{
                 const ft = getLatestText();
