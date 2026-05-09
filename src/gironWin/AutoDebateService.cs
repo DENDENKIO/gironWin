@@ -9,41 +9,35 @@ namespace gironWin
 
     public sealed class AutoDebateService
     {
-        private readonly TransferService _transferService;
-        private readonly ApprovalQueue _approvalQueue;
+        private readonly TransferService      _transferService;
+        private readonly ApprovalQueue        _approvalQueue;
         private readonly AiSiteAdapterResolver _adapterResolver;
-        private readonly SessionRepository _sessionRepository;
 
         private CancellationTokenSource? _cts;
         private bool _isPaused;
         private TaskCompletionSource<bool>? _pauseTcs;
 
         public bool IsRunning => _cts != null && !_cts.IsCancellationRequested;
-        public bool IsPaused => _isPaused;
+        public bool IsPaused  => _isPaused;
 
         public event EventHandler<string>? StatusChanged;
-        public event EventHandler<int>? TurnAdvanced;
-        public event EventHandler? DebateStopped;
-        /// <summary>ループ検知時に発火。string = 検知メッセージ。</summary>
-        public event EventHandler<string>? LoopDetected;
+        public event EventHandler<int>?    TurnAdvanced;
+        public event EventHandler?         DebateStopped;
 
         public AutoDebateService(
             TransferService transferService,
             ApprovalQueue approvalQueue,
-            AiSiteAdapterResolver adapterResolver,
-            SessionRepository sessionRepository)
+            AiSiteAdapterResolver adapterResolver)
         {
-            _transferService = transferService;
-            _approvalQueue = approvalQueue;
-            _adapterResolver = adapterResolver;
-            _sessionRepository = sessionRepository;
+            _transferService  = transferService;
+            _approvalQueue    = approvalQueue;
+            _adapterResolver  = adapterResolver;
         }
 
         public void Start(AutoDebateConfig config)
         {
             if (IsRunning) return;
-            _sessionRepository.StartSession();
-            _cts = new CancellationTokenSource();
+            _cts      = new CancellationTokenSource();
             _isPaused = false;
             _pauseTcs = null;
             _ = RunLoopAsync(config, _cts.Token);
@@ -52,7 +46,7 @@ namespace gironWin
         public void Stop()
         {
             _cts?.Cancel();
-            _cts = null;
+            _cts      = null;
             _isPaused = false;
             _pauseTcs?.TrySetResult(true);
             NotifyStatus("討論を停止しました。");
@@ -85,17 +79,14 @@ namespace gironWin
             string leftSnapshot  = string.Empty;
             string rightSnapshot = string.Empty;
 
-            // ループ検知器（左右それぞれ）
-            var leftLoopDetector  = new LoopDetector();
-            var rightLoopDetector = new LoopDetector();
-
             try
             {
                 while (!ct.IsCancellationRequested)
                 {
+                    // 一時停止待機
                     if (_isPaused)
                     {
-                        NotifyStatus("一時停止中... 再開ボタンを押してください。");
+                        NotifyStatus("一時停止中… 再開ボタンを押してください。");
                         await (_pauseTcs?.Task ?? Task.CompletedTask);
                         if (ct.IsCancellationRequested) break;
                     }
@@ -103,11 +94,12 @@ namespace gironWin
                     turn++;
                     TurnAdvanced?.Invoke(this, turn);
 
-                    bool isLeftTurn = direction == DebateDirection.LeftToRight;
-                    var srcWebView = isLeftTurn ? config.LeftWebView : config.RightWebView;
-                    var tgtWebView = isLeftTurn ? config.RightWebView : config.LeftWebView;
-                    string srcUrl  = isLeftTurn ? config.LeftUrl  : config.RightUrl;
-                    string tgtUrl  = isLeftTurn ? config.RightUrl : config.LeftUrl;
+                    bool isLeftTurn  = direction == DebateDirection.LeftToRight;
+                    var srcWebView   = isLeftTurn ? config.LeftWebView  : config.RightWebView;
+                    var tgtWebView   = isLeftTurn ? config.RightWebView : config.LeftWebView;
+                    string srcUrl    = isLeftTurn ? config.LeftUrl      : config.RightUrl;
+                    string tgtUrl    = isLeftTurn ? config.RightUrl     : config.LeftUrl;
+                    string tgtPrompt = isLeftTurn ? config.RightSystemPrompt : config.LeftSystemPrompt;
 
                     var srcAdapter = _adapterResolver.Resolve(srcUrl);
                     var tgtAdapter = _adapterResolver.Resolve(tgtUrl);
@@ -121,6 +113,7 @@ namespace gironWin
                     string snapshot = isLeftTurn ? leftSnapshot : rightSnapshot;
                     NotifyStatus($"ターン {turn} [{srcAdapter.SiteName}→{tgtAdapter.SiteName}]: 生成完了を待機中...");
 
+                    // 生成完了待機
                     string generatedText;
                     try
                     {
@@ -146,25 +139,20 @@ namespace gironWin
 
                     NotifyStatus($"ターン {turn}: 生成完了（{generatedText.Length}文字）");
 
-                    // ── ループ検知 ──────────────────────────────
-                    var detector = isLeftTurn ? leftLoopDetector : rightLoopDetector;
-                    if (detector.AddAndCheck(generatedText))
-                    {
-                        string loopMsg = $"ターン {turn}: ループを検知しました（類似メッセージが連続）。自動停止します。";
-                        NotifyStatus(loopMsg);
-                        LoopDetected?.Invoke(this, loopMsg);
-                        break;
-                    }
-                    // ───────────────────────────────────────────
-
                     if (isLeftTurn) leftSnapshot  = generatedText;
                     else            rightSnapshot = generatedText;
 
-                    string prefix = $"[Turn {turn} {srcAdapter.SiteName}→{tgtAdapter.SiteName}] ";
-                    string transferText = config.AppendBridge
-                        ? $"{prefix}{generatedText}\n\nこの意見についてどう考えますか？"
-                        : $"{prefix}{generatedText}";
+                    // FR-06: 役割プロンプトを先頭に付加
+                    string prefix = $"[Turn {turn} {srcAdapter.SiteName}→{tgtAdapter.SiteName}]\n";
+                    string body   = config.AppendBridge
+                        ? $"{generatedText}\n\nこの意見についてどう考えますか？"
+                        : generatedText;
 
+                    string transferText = string.IsNullOrWhiteSpace(tgtPrompt)
+                        ? $"{prefix}{body}"
+                        : $"{tgtPrompt}\n\n{prefix}{body}";
+
+                    // FR-09: 承認待機
                     if (config.RequireApproval)
                     {
                         NotifyStatus($"ターン {turn}: 承認待ち...");
@@ -187,24 +175,6 @@ namespace gironWin
                     var transferResult = await _transferService.TransferAsync(
                         srcWebView, tgtWebView, srcUrl, tgtUrl,
                         submit: true, appendBridge: false, manualText: transferText);
-
-                    // ── ログ保存 ───────────────────────────────
-                    var record = new TransferRecord
-                    {
-                        TurnNumber    = turn,
-                        SourceSite    = srcAdapter.SiteName,
-                        TargetSite    = tgtAdapter.SiteName,
-                        Direction     = $"{srcAdapter.SiteName}→{tgtAdapter.SiteName}",
-                        Text          = transferText,
-                        Submitted     = transferResult.Success,
-                        ApprovalStatus = config.RequireApproval
-                            ? ApprovalStatuses.Approved
-                            : ApprovalStatuses.NotRequired,
-                        Status        = transferResult.Success ? "完了" : "失敗",
-                        DeliveredAt   = transferResult.Success ? DateTime.Now : null
-                    };
-                    _ = _sessionRepository.AppendAsync(record);
-                    // ───────────────────────────────────────────
 
                     if (!transferResult.Success)
                     {
@@ -229,27 +199,14 @@ namespace gironWin
             }
             finally
             {
-                _cts = null;
+                _cts      = null;
                 _isPaused = false;
                 _pauseTcs = null;
                 DebateStopped?.Invoke(this, EventArgs.Empty);
-                NotifyStatus($"自動討論終了。セッションID: {_sessionRepository.SessionId}");
+                NotifyStatus("自動討論終了。");
             }
         }
 
         private void NotifyStatus(string msg) => StatusChanged?.Invoke(this, msg);
-    }
-
-    public sealed class AutoDebateConfig
-    {
-        public WebView2 LeftWebView { get; set; } = null!;
-        public WebView2 RightWebView { get; set; } = null!;
-        public string LeftUrl { get; set; } = string.Empty;
-        public string RightUrl { get; set; } = string.Empty;
-        public bool AppendBridge { get; set; }
-        public bool RequireApproval { get; set; } = true;
-        public int MaxTurns { get; set; }
-        public int TurnIntervalMs { get; set; } = 200;
-        public int GenerationTimeoutMs { get; set; } = 20000;
     }
 }
