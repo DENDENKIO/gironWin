@@ -1,5 +1,4 @@
 using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.Wpf;
 using System;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
@@ -13,6 +12,7 @@ namespace gironWin
     {
         private readonly AiSiteAdapterResolver _adapterResolver = new();
         private readonly ObservableCollection<TransferRecord> _transferRecords = new();
+        private TransferService _transferService = null!;
 
         public ObservableCollection<TransferRecord> TransferRecords => _transferRecords;
 
@@ -25,9 +25,14 @@ namespace gironWin
 
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
+            _transferService = new TransferService(_adapterResolver, _transferRecords);
             await InitializeWebViewsAsync();
-            SetStatus("WebView2 を初期化しました。");
+            SetStatus("準備完了。");
         }
+
+        // ---------------------------------------------------------------
+        // WebView2 初期化
+        // ---------------------------------------------------------------
 
         private async Task InitializeWebViewsAsync()
         {
@@ -42,332 +47,147 @@ namespace gironWin
             RightWebView.CoreWebView2.Settings.AreDevToolsEnabled = true;
             RightWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
 
-            if (Uri.TryCreate(LeftUrlTextBox.Text, UriKind.Absolute, out var leftUri))
-            {
-                LeftWebView.Source = leftUri;
-            }
-
-            if (Uri.TryCreate(RightUrlTextBox.Text, UriKind.Absolute, out var rightUri))
-            {
-                RightWebView.Source = rightUri;
-            }
+            NavigateTo(LeftWebView, LeftUrlTextBox.Text);
+            NavigateTo(RightWebView, RightUrlTextBox.Text);
         }
+
+        private void NavigateTo(Microsoft.Web.WebView2.Wpf.WebView2 webView, string url)
+        {
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                webView.Source = uri;
+        }
+
+        // ---------------------------------------------------------------
+        // ステータス
+        // ---------------------------------------------------------------
 
         private void SetStatus(string message)
         {
             StatusTextBlock.Text = message;
         }
 
-        private string BuildTransferText(string sourceText)
+        // ---------------------------------------------------------------
+        // 転送ヘルパー
+        // ---------------------------------------------------------------
+
+        private bool AppendBridge => AppendBridgeCheckBox.IsChecked == true;
+        private bool ConfirmBeforeSend => ConfirmBeforeSendCheckBox.IsChecked == true;
+
+        private async Task<string?> ConfirmTextAsync(string text, string title)
         {
-            if (string.IsNullOrWhiteSpace(sourceText))
-            {
-                return string.Empty;
-            }
+            if (!ConfirmBeforeSend)
+                return text;
 
-            if (AppendBridgeCheckBox.IsChecked == true)
-            {
-                return $"{sourceText}\n\nこのように考えていますがどうですか？";
-            }
-
-            return sourceText;
+            var win = new TextPreviewWindow(text) { Owner = this, Title = title };
+            return win.ShowDialog() == true ? win.EditedText : null;
         }
 
-        private void AddTransferRecord(
-            string sourceSite,
-            string targetSite,
-            string text,
-            bool submitted,
-            string status)
-        {
-            _transferRecords.Insert(0, new TransferRecord
-            {
-                Timestamp = DateTime.Now,
-                SourceSite = sourceSite,
-                TargetSite = targetSite,
-                Direction = $"{sourceSite} → {targetSite}",
-                Text = text,
-                Submitted = submitted,
-                Status = status
-            });
-        }
-
-        private async Task<bool> TransferAsync(
-            WebView2 sourceWebView,
-            WebView2 targetWebView,
+        private async Task RunTransferAsync(
+            Microsoft.Web.WebView2.Wpf.WebView2 sourceWebView,
+            Microsoft.Web.WebView2.Wpf.WebView2 targetWebView,
             string sourceUrl,
             string targetUrl,
             bool submit)
         {
-            var sourceAdapter = _adapterResolver.Resolve(sourceUrl);
-            var targetAdapter = _adapterResolver.Resolve(targetUrl);
-
-            if (sourceAdapter == null)
+            // 送信前確認が必要な場合は選択文を先読みしてプレビューへ
+            string? overrideText = null;
+            if (ConfirmBeforeSend)
             {
-                SetStatus("送信元サイトのアダプタが見つかりません。");
-                return false;
-            }
-
-            if (targetAdapter == null)
-            {
-                SetStatus("送信先サイトのアダプタが見つかりません。");
-                return false;
-            }
-
-            SetStatus($"{sourceAdapter.SiteName} → {targetAdapter.SiteName} の転送を開始しました。");
-
-            string selectedText = await sourceAdapter.GetSelectedTextAsync(sourceWebView);
-            string text = BuildTransferText(selectedText);
-
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                SetStatus("選択された文字列がありません。");
-                return false;
-            }
-
-            string finalText = text;
-
-            if (ConfirmBeforeSendCheckBox.IsChecked == true)
-            {
-                var previewWindow = new TextPreviewWindow(text)
+                var sourceAdapter = _adapterResolver.Resolve(sourceUrl);
+                if (sourceAdapter != null)
                 {
-                    Owner = this
-                };
+                    string selected = await sourceAdapter.GetSelectedTextAsync(sourceWebView);
+                    string built = AppendBridge
+                        ? $"{selected}\n\nこのように考えていますがどうですか？"
+                        : selected;
 
-                bool? previewResult = previewWindow.ShowDialog();
-                if (previewResult != true)
-                {
-                    AddTransferRecord(sourceAdapter.SiteName, targetAdapter.SiteName, text, submit, "キャンセル");
-                    SetStatus("転送をキャンセルしました。");
-                    return false;
+                    overrideText = await ConfirmTextAsync(built, "送信前確認");
+                    if (overrideText == null)
+                    {
+                        SetStatus("転送をキャンセルしました。");
+                        return;
+                    }
                 }
-
-                finalText = previewWindow.EditedText;
             }
 
-            if (string.IsNullOrWhiteSpace(finalText))
-            {
-                AddTransferRecord(sourceAdapter.SiteName, targetAdapter.SiteName, finalText, submit, "空文字");
-                SetStatus("送信テキストが空です。");
-                return false;
-            }
+            var result = await _transferService.TransferAsync(
+                sourceWebView,
+                targetWebView,
+                sourceUrl,
+                targetUrl,
+                submit,
+                AppendBridge,
+                overrideText);
 
-            bool inputOk = await targetAdapter.SetInputAsync(targetWebView, finalText);
-            if (!inputOk)
-            {
-                AddTransferRecord(sourceAdapter.SiteName, targetAdapter.SiteName, finalText, submit, "入力失敗");
-                SetStatus($"{targetAdapter.SiteName} の入力欄が見つかりませんでした。");
-                return false;
-            }
-
-            if (!submit)
-            {
-                AddTransferRecord(sourceAdapter.SiteName, targetAdapter.SiteName, finalText, false, "入力のみ");
-                SetStatus($"{targetAdapter.SiteName} へ入力しました。");
-                return true;
-            }
-
-            await Task.Delay(300);
-
-            bool sendOk = await targetAdapter.SendAsync(targetWebView);
-            if (!sendOk)
-            {
-                AddTransferRecord(sourceAdapter.SiteName, targetAdapter.SiteName, finalText, true, "送信失敗");
-                SetStatus($"{targetAdapter.SiteName} への送信に失敗しました。");
-                return false;
-            }
-
-            AddTransferRecord(sourceAdapter.SiteName, targetAdapter.SiteName, finalText, true, "送信成功");
-            SetStatus($"{targetAdapter.SiteName} へ送信しました。");
-            return true;
+            SetStatus(result.Message);
         }
 
-        private TransferRecord? GetSelectedTransferRecord()
-        {
-            return TransferHistoryListView.SelectedItem as TransferRecord;
-        }
-
-        private async Task<bool> ReuseRecordAsync(
-            TransferRecord record,
-            WebView2 targetWebView,
+        private async Task RunReuseAsync(
+            TransferRecord? record,
+            Microsoft.Web.WebView2.Wpf.WebView2 targetWebView,
             string targetUrl,
             bool submit)
         {
             if (record == null)
             {
                 SetStatus("履歴が選択されていません。");
-                return false;
-            }
-
-            var targetAdapter = _adapterResolver.Resolve(targetUrl);
-            if (targetAdapter == null)
-            {
-                SetStatus("送信先サイトのアダプタが見つかりません。");
-                return false;
-            }
-
-            string finalText = record.Text;
-
-            if (ConfirmBeforeSendCheckBox.IsChecked == true)
-            {
-                var previewWindow = new TextPreviewWindow(record.Text)
-                {
-                    Owner = this,
-                    Title = $"履歴再利用 - {targetAdapter.SiteName}"
-                };
-
-                bool? previewResult = previewWindow.ShowDialog();
-                if (previewResult != true)
-                {
-                    AddTransferRecord(record.SourceSite, targetAdapter.SiteName, record.Text, submit, "履歴再利用キャンセル");
-                    SetStatus("履歴再利用をキャンセルしました。");
-                    return false;
-                }
-
-                finalText = previewWindow.EditedText;
-            }
-
-            if (string.IsNullOrWhiteSpace(finalText))
-            {
-                AddTransferRecord(record.SourceSite, targetAdapter.SiteName, finalText, submit, "履歴再利用空文字");
-                SetStatus("履歴再利用テキストが空です。");
-                return false;
-            }
-
-            bool inputOk = await targetAdapter.SetInputAsync(targetWebView, finalText);
-            if (!inputOk)
-            {
-                AddTransferRecord(record.SourceSite, targetAdapter.SiteName, finalText, submit, "履歴再利用入力失敗");
-                SetStatus($"{targetAdapter.SiteName} の入力欄が見つかりませんでした。");
-                return false;
-            }
-
-            if (!submit)
-            {
-                AddTransferRecord(record.SourceSite, targetAdapter.SiteName, finalText, false, "履歴再利用入力");
-                SetStatus($"履歴を {targetAdapter.SiteName} へ入力しました。");
-                return true;
-            }
-
-            await Task.Delay(300);
-
-            bool sendOk = await targetAdapter.SendAsync(targetWebView);
-            if (!sendOk)
-            {
-                AddTransferRecord(record.SourceSite, targetAdapter.SiteName, finalText, true, "履歴再利用送信失敗");
-                SetStatus($"{targetAdapter.SiteName} への履歴再送信に失敗しました。");
-                return false;
-            }
-
-            AddTransferRecord(record.SourceSite, targetAdapter.SiteName, finalText, true, "履歴再利用送信成功");
-            SetStatus($"履歴を {targetAdapter.SiteName} へ送信しました。");
-            return true;
-        }
-
-        private void OpenHistoryPreview(TransferRecord? record)
-        {
-            if (record == null)
-            {
-                SetStatus("履歴が選択されていません。");
                 return;
             }
 
-            var previewWindow = new TextPreviewWindow(record.Text)
-            {
-                Owner = this,
-                Title = $"履歴詳細 - {record.Direction}"
-            };
+            string? text = await ConfirmTextAsync(
+                record.Text,
+                $"履歴再利用 - {record.Direction}");
 
-            previewWindow.ShowDialog();
-            SetStatus($"履歴詳細を表示しました: {record.Direction}");
-        }
-
-        private void CopySelectedHistoryText()
-        {
-            var record = GetSelectedTransferRecord();
-            if (record == null)
+            if (text == null)
             {
-                SetStatus("コピー対象の履歴が選択されていません。");
+                SetStatus("履歴再利用をキャンセルしました。");
                 return;
             }
 
-            Clipboard.SetText(record.Text ?? string.Empty);
-            SetStatus($"履歴をコピーしました: {record.Direction}");
+            var result = await _transferService.ReuseAsync(
+                record, targetWebView, targetUrl, submit, text);
+
+            SetStatus(result.Message);
         }
+
+        private TransferRecord? GetSelectedRecord() =>
+            TransferHistoryListView.SelectedItem as TransferRecord;
+
+        // ---------------------------------------------------------------
+        // ナビゲーション
+        // ---------------------------------------------------------------
 
         private void LeftGoButton_Click(object sender, RoutedEventArgs e)
         {
-            if (Uri.TryCreate(LeftUrlTextBox.Text, UriKind.Absolute, out var uri))
-            {
-                LeftWebView.Source = uri;
-                SetStatus("左WebViewを移動しました。");
-            }
-            else
-            {
-                SetStatus("左URLが不正です。");
-            }
+            NavigateTo(LeftWebView, LeftUrlTextBox.Text);
+            SetStatus("左 WebView を移動しました。");
         }
 
         private void RightGoButton_Click(object sender, RoutedEventArgs e)
         {
-            if (Uri.TryCreate(RightUrlTextBox.Text, UriKind.Absolute, out var uri))
-            {
-                RightWebView.Source = uri;
-                SetStatus("右WebViewを移動しました。");
-            }
-            else
-            {
-                SetStatus("右URLが不正です。");
-            }
+            NavigateTo(RightWebView, RightUrlTextBox.Text);
+            SetStatus("右 WebView を移動しました。");
         }
 
-        private async void SendLeftSelectionToRightInputButton_Click(object sender, RoutedEventArgs e)
-        {
-            bool ok = await TransferAsync(
-                LeftWebView,
-                RightWebView,
-                LeftUrlTextBox.Text,
-                RightUrlTextBox.Text,
-                false);
+        // ---------------------------------------------------------------
+        // 転送ボタン
+        // ---------------------------------------------------------------
 
-            SetStatus(ok ? "左から右へ入力しました。" : "左から右への入力に失敗しました。");
-        }
+        private async void SendLeftSelectionToRightInputButton_Click(object sender, RoutedEventArgs e) =>
+            await RunTransferAsync(LeftWebView, RightWebView, LeftUrlTextBox.Text, RightUrlTextBox.Text, false);
 
-        private async void SendLeftSelectionToRightSubmitButton_Click(object sender, RoutedEventArgs e)
-        {
-            bool ok = await TransferAsync(
-                LeftWebView,
-                RightWebView,
-                LeftUrlTextBox.Text,
-                RightUrlTextBox.Text,
-                true);
+        private async void SendLeftSelectionToRightSubmitButton_Click(object sender, RoutedEventArgs e) =>
+            await RunTransferAsync(LeftWebView, RightWebView, LeftUrlTextBox.Text, RightUrlTextBox.Text, true);
 
-            SetStatus(ok ? "左から右へ送信しました。" : "左から右への送信に失敗しました。");
-        }
+        private async void SendRightSelectionToLeftInputButton_Click(object sender, RoutedEventArgs e) =>
+            await RunTransferAsync(RightWebView, LeftWebView, RightUrlTextBox.Text, LeftUrlTextBox.Text, false);
 
-        private async void SendRightSelectionToLeftInputButton_Click(object sender, RoutedEventArgs e)
-        {
-            bool ok = await TransferAsync(
-                RightWebView,
-                LeftWebView,
-                RightUrlTextBox.Text,
-                LeftUrlTextBox.Text,
-                false);
+        private async void SendRightSelectionToLeftSubmitButton_Click(object sender, RoutedEventArgs e) =>
+            await RunTransferAsync(RightWebView, LeftWebView, RightUrlTextBox.Text, LeftUrlTextBox.Text, true);
 
-            SetStatus(ok ? "右から左へ入力しました。" : "右から左への入力に失敗しました。");
-        }
-
-        private async void SendRightSelectionToLeftSubmitButton_Click(object sender, RoutedEventArgs e)
-        {
-            bool ok = await TransferAsync(
-                RightWebView,
-                LeftWebView,
-                RightUrlTextBox.Text,
-                LeftUrlTextBox.Text,
-                true);
-
-            SetStatus(ok ? "右から左へ送信しました。" : "右から左への送信に失敗しました。");
-        }
+        // ---------------------------------------------------------------
+        // 履歴操作
+        // ---------------------------------------------------------------
 
         private void ClearHistoryButton_Click(object sender, RoutedEventArgs e)
         {
@@ -375,55 +195,53 @@ namespace gironWin
             SetStatus("履歴をクリアしました。");
         }
 
-        private void TransferHistoryListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
-        {
-            OpenHistoryPreview(GetSelectedTransferRecord());
-        }
+        private void TransferHistoryListView_MouseDoubleClick(object sender, MouseButtonEventArgs e) =>
+            OpenHistoryPreview(GetSelectedRecord());
 
         private void TransferHistoryListViewItem_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            if (sender is ListViewItem item && item.Content is TransferRecord record)
-            {
+            if (sender is ListViewItem { Content: TransferRecord record })
                 OpenHistoryPreview(record);
-            }
         }
+
+        private void OpenHistoryPreview(TransferRecord? record)
+        {
+            if (record == null) { SetStatus("履歴が選択されていません。"); return; }
+
+            var win = new TextPreviewWindow(record.Text)
+            {
+                Owner = this,
+                Title = $"履歴詳細 - {record.Direction}"
+            };
+            win.ShowDialog();
+            SetStatus($"履歴詳細: {record.Direction}");
+        }
+
+        // ---------------------------------------------------------------
+        // 右クリックメニュー
+        // ---------------------------------------------------------------
 
         private void CopySelectedHistoryTextMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            CopySelectedHistoryText();
+            var record = GetSelectedRecord();
+            if (record == null) { SetStatus("コピー対象の履歴が選択されていません。"); return; }
+            Clipboard.SetText(record.Text ?? string.Empty);
+            SetStatus($"履歴をコピーしました: {record.Direction}");
         }
 
-        private void OpenSelectedHistoryPreviewMenuItem_Click(object sender, RoutedEventArgs e)
-        {
-            OpenHistoryPreview(GetSelectedTransferRecord());
-        }
+        private void OpenSelectedHistoryPreviewMenuItem_Click(object sender, RoutedEventArgs e) =>
+            OpenHistoryPreview(GetSelectedRecord());
 
-        private async void ReuseToLeftInputMenuItem_Click(object sender, RoutedEventArgs e)
-        {
-            var record = GetSelectedTransferRecord();
-            bool ok = await ReuseRecordAsync(record, LeftWebView, LeftUrlTextBox.Text, false);
-            SetStatus(ok ? "履歴を左へ入力しました。" : "履歴の左入力に失敗しました。");
-        }
+        private async void ReuseToLeftInputMenuItem_Click(object sender, RoutedEventArgs e) =>
+            await RunReuseAsync(GetSelectedRecord(), LeftWebView, LeftUrlTextBox.Text, false);
 
-        private async void ReuseToLeftSubmitMenuItem_Click(object sender, RoutedEventArgs e)
-        {
-            var record = GetSelectedTransferRecord();
-            bool ok = await ReuseRecordAsync(record, LeftWebView, LeftUrlTextBox.Text, true);
-            SetStatus(ok ? "履歴を左へ送信しました。" : "履歴の左送信に失敗しました。");
-        }
+        private async void ReuseToLeftSubmitMenuItem_Click(object sender, RoutedEventArgs e) =>
+            await RunReuseAsync(GetSelectedRecord(), LeftWebView, LeftUrlTextBox.Text, true);
 
-        private async void ReuseToRightInputMenuItem_Click(object sender, RoutedEventArgs e)
-        {
-            var record = GetSelectedTransferRecord();
-            bool ok = await ReuseRecordAsync(record, RightWebView, RightUrlTextBox.Text, false);
-            SetStatus(ok ? "履歴を右へ入力しました。" : "履歴の右入力に失敗しました。");
-        }
+        private async void ReuseToRightInputMenuItem_Click(object sender, RoutedEventArgs e) =>
+            await RunReuseAsync(GetSelectedRecord(), RightWebView, RightUrlTextBox.Text, false);
 
-        private async void ReuseToRightSubmitMenuItem_Click(object sender, RoutedEventArgs e)
-        {
-            var record = GetSelectedTransferRecord();
-            bool ok = await ReuseRecordAsync(record, RightWebView, RightUrlTextBox.Text, true);
-            SetStatus(ok ? "履歴を右へ送信しました。" : "履歴の右送信に失敗しました。");
-        }
+        private async void ReuseToRightSubmitMenuItem_Click(object sender, RoutedEventArgs e) =>
+            await RunReuseAsync(GetSelectedRecord(), RightWebView, RightUrlTextBox.Text, true);
     }
 }
