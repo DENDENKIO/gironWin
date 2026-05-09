@@ -12,6 +12,7 @@ namespace gironWin
         private readonly TransferService _transferService;
         private readonly ApprovalQueue _approvalQueue;
         private readonly AiSiteAdapterResolver _adapterResolver;
+        private readonly SessionRepository _sessionRepository;
 
         private CancellationTokenSource? _cts;
         private bool _isPaused;
@@ -23,20 +24,25 @@ namespace gironWin
         public event EventHandler<string>? StatusChanged;
         public event EventHandler<int>? TurnAdvanced;
         public event EventHandler? DebateStopped;
+        /// <summary>ループ検知時に発火。string = 検知メッセージ。</summary>
+        public event EventHandler<string>? LoopDetected;
 
         public AutoDebateService(
             TransferService transferService,
             ApprovalQueue approvalQueue,
-            AiSiteAdapterResolver adapterResolver)
+            AiSiteAdapterResolver adapterResolver,
+            SessionRepository sessionRepository)
         {
             _transferService = transferService;
             _approvalQueue = approvalQueue;
             _adapterResolver = adapterResolver;
+            _sessionRepository = sessionRepository;
         }
 
         public void Start(AutoDebateConfig config)
         {
             if (IsRunning) return;
+            _sessionRepository.StartSession();
             _cts = new CancellationTokenSource();
             _isPaused = false;
             _pauseTcs = null;
@@ -76,9 +82,12 @@ namespace gironWin
             int turn = 0;
             DebateDirection direction = DebateDirection.LeftToRight;
 
-            // 左右それぞれの「送信済み最新テキスト」を保持
             string leftSnapshot  = string.Empty;
             string rightSnapshot = string.Empty;
+
+            // ループ検知器（左右それぞれ）
+            var leftLoopDetector  = new LoopDetector();
+            var rightLoopDetector = new LoopDetector();
 
             try
             {
@@ -109,10 +118,8 @@ namespace gironWin
                         break;
                     }
 
-                    // ★ snapshot は「前回このサイドが生成したテキスト」
                     string snapshot = isLeftTurn ? leftSnapshot : rightSnapshot;
                     NotifyStatus($"ターン {turn} [{srcAdapter.SiteName}→{tgtAdapter.SiteName}]: 生成完了を待機中...");
-                    NotifyStatus($"ターン {turn}: snapshot文字数={snapshot.Length}");
 
                     string generatedText;
                     try
@@ -121,7 +128,6 @@ namespace gironWin
                         generatedText = await monitor.WaitForCompletionAsync(
                             snapshot, config.GenerationTimeoutMs, ct);
 
-                        // 確定後50msで最終テキスト再取得
                         await Task.Delay(50, ct);
                         string recheck = (await srcAdapter.ExtractLatestAsync(srcWebView))?.Trim() ?? string.Empty;
                         if (!string.IsNullOrWhiteSpace(recheck)) generatedText = recheck;
@@ -140,7 +146,17 @@ namespace gironWin
 
                     NotifyStatus($"ターン {turn}: 生成完了（{generatedText.Length}文字）");
 
-                    // ★ snapshot を更新（次の同方向ターンで使用）
+                    // ── ループ検知 ──────────────────────────────
+                    var detector = isLeftTurn ? leftLoopDetector : rightLoopDetector;
+                    if (detector.AddAndCheck(generatedText))
+                    {
+                        string loopMsg = $"ターン {turn}: ループを検知しました（類似メッセージが連続）。自動停止します。";
+                        NotifyStatus(loopMsg);
+                        LoopDetected?.Invoke(this, loopMsg);
+                        break;
+                    }
+                    // ───────────────────────────────────────────
+
                     if (isLeftTurn) leftSnapshot  = generatedText;
                     else            rightSnapshot = generatedText;
 
@@ -172,6 +188,24 @@ namespace gironWin
                         srcWebView, tgtWebView, srcUrl, tgtUrl,
                         submit: true, appendBridge: false, manualText: transferText);
 
+                    // ── ログ保存 ───────────────────────────────
+                    var record = new TransferRecord
+                    {
+                        TurnNumber    = turn,
+                        SourceSite    = srcAdapter.SiteName,
+                        TargetSite    = tgtAdapter.SiteName,
+                        Direction     = $"{srcAdapter.SiteName}→{tgtAdapter.SiteName}",
+                        Text          = transferText,
+                        Submitted     = transferResult.Success,
+                        ApprovalStatus = config.RequireApproval
+                            ? ApprovalStatuses.Approved
+                            : ApprovalStatuses.NotRequired,
+                        Status        = transferResult.Success ? "完了" : "失敗",
+                        DeliveredAt   = transferResult.Success ? DateTime.Now : null
+                    };
+                    _ = _sessionRepository.AppendAsync(record);
+                    // ───────────────────────────────────────────
+
                     if (!transferResult.Success)
                     {
                         NotifyStatus($"ターン {turn}: 送信失敗 → {transferResult.Message}");
@@ -180,7 +214,6 @@ namespace gironWin
 
                     NotifyStatus($"ターン {turn}: 送信完了。");
 
-                    // ★ direction 切り替え後に MaxTurns チェック
                     direction = direction == DebateDirection.LeftToRight
                         ? DebateDirection.RightToLeft
                         : DebateDirection.LeftToRight;
@@ -200,7 +233,7 @@ namespace gironWin
                 _isPaused = false;
                 _pauseTcs = null;
                 DebateStopped?.Invoke(this, EventArgs.Empty);
-                NotifyStatus("自動討論終了。");
+                NotifyStatus($"自動討論終了。セッションID: {_sessionRepository.SessionId}");
             }
         }
 
