@@ -5,7 +5,9 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         mc:Ignorable="d"
-        Title="gironWin" Height="900" Width="1600"
+        Title="gironWin"
+        Height="980"
+        Width="1600"
         WindowStartupLocation="CenterScreen">
     <Grid>
         <Grid.RowDefinitions>
@@ -80,7 +82,7 @@
             </WrapPanel>
         </Border>
 
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="1" Margin="8,0,8,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="6"/>
@@ -94,6 +96,7 @@
                           VerticalAlignment="Stretch"/>
             <wv2:WebView2 x:Name="RightWebView" Grid.Column="2" />
         </Grid>
+
         <GridSplitter Grid.Row="2"
                       Height="6"
                       HorizontalAlignment="Stretch"
@@ -141,16 +144,12 @@
                             <MenuItem Header="右へ送信" Click="ReuseToRightSubmitMenuItem_Click"/>
                         </ContextMenu>
                     </ListView.ContextMenu>
-                    <ListView.ItemContainerStyle>
-                        <Style TargetType="{x:Type ListViewItem}">
-                        </Style>
-                    </ListView.ItemContainerStyle>
                     <ListView.View>
                         <GridView>
                             <GridViewColumn Header="時刻" Width="150" DisplayMemberBinding="{Binding TimestampText}" />
                             <GridViewColumn Header="方向" Width="180" DisplayMemberBinding="{Binding Direction}" />
                             <GridViewColumn Header="送信種別" Width="90" DisplayMemberBinding="{Binding SubmittedText}" />
-                            <GridViewColumn Header="状態" Width="110" DisplayMemberBinding="{Binding Status}" />
+                            <GridViewColumn Header="状態" Width="120" DisplayMemberBinding="{Binding Status}" />
                             <GridViewColumn Header="内容" Width="850" DisplayMemberBinding="{Binding PreviewText}" />
                         </GridView>
                     </ListView.View>
