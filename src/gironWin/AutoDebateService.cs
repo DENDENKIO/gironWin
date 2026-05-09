@@ -76,7 +76,7 @@ namespace gironWin
             int turn = 0;
             DebateDirection direction = DebateDirection.LeftToRight;
 
-            // ★ snapshot を外側で管理: 左右それぞれの「最後に送信済みテキスト」を保持
+            // 左右それぞれの「送信済み最新テキスト」を保持
             string leftSnapshot  = string.Empty;
             string rightSnapshot = string.Empty;
 
@@ -109,20 +109,19 @@ namespace gironWin
                         break;
                     }
 
-                    // ★ このターンの送信元の snapshot（前回送信済みテキスト）
+                    // ★ snapshot は「前回このサイドが生成したテキスト」
                     string snapshot = isLeftTurn ? leftSnapshot : rightSnapshot;
-                    NotifyStatus($"ターン {turn} [{srcAdapter.SiteName}→{tgtAdapter.SiteName}]: 生成完了を待機...");
+                    NotifyStatus($"ターン {turn} [{srcAdapter.SiteName}→{tgtAdapter.SiteName}]: 生成完了を待機中...");
+                    NotifyStatus($"ターン {turn}: snapshot文字数={snapshot.Length}");
 
                     string generatedText;
                     try
                     {
                         using var monitor = new ConversationMonitor(srcAdapter, srcWebView);
                         generatedText = await monitor.WaitForCompletionAsync(
-                            snapshot,
-                            config.GenerationTimeoutMs,
-                            ct);
+                            snapshot, config.GenerationTimeoutMs, ct);
 
-                        // ★ 確定後の再取得を 50ms に短縮
+                        // 確定後50msで最終テキスト再取得
                         await Task.Delay(50, ct);
                         string recheck = (await srcAdapter.ExtractLatestAsync(srcWebView))?.Trim() ?? string.Empty;
                         if (!string.IsNullOrWhiteSpace(recheck)) generatedText = recheck;
@@ -141,7 +140,7 @@ namespace gironWin
 
                     NotifyStatus($"ターン {turn}: 生成完了（{generatedText.Length}文字）");
 
-                    // ★ 送信元の snapshot を更新（次の同方向ターンで使う）
+                    // ★ snapshot を更新（次の同方向ターンで使用）
                     if (isLeftTurn) leftSnapshot  = generatedText;
                     else            rightSnapshot = generatedText;
 
@@ -159,7 +158,7 @@ namespace gironWin
                                 srcAdapter.SiteName, tgtAdapter.SiteName, transferText, true, ct);
                             if (!result.Approved)
                             {
-                                NotifyStatus($"ターン {turn}: 却下。停止します。");
+                                NotifyStatus($"ターン {turn}: 却下されました。停止します。");
                                 break;
                             }
                             transferText = result.Text;
@@ -205,7 +204,7 @@ namespace gironWin
             }
         }
 
-        private void NotifyStatus(string message) => StatusChanged?.Invoke(this, message);
+        private void NotifyStatus(string msg) => StatusChanged?.Invoke(this, msg);
     }
 
     public sealed class AutoDebateConfig

@@ -79,10 +79,10 @@ namespace gironWin
                 bool sendOk = await targetAdapter.SendAsync(targetWebView);
                 Log($"[Transfer] SendAsync={sendOk}");
 
-                // ★ SendAsync が false の場合、100ms 待って1回リトライ
+                // ★ SendAsync が false の場合、150ms 待って1回リトライ
                 if (!sendOk)
                 {
-                    await Task.Delay(100);
+                    await Task.Delay(150);
                     sendOk = await targetAdapter.SendAsync(targetWebView);
                     Log($"[Transfer] SendAsync retry={sendOk}");
                 }
@@ -140,7 +140,7 @@ namespace gironWin
 
                 if (!sendOk)
                 {
-                    await Task.Delay(100);
+                    await Task.Delay(150);
                     sendOk = await targetAdapter.SendAsync(targetWebView);
                     Log($"[Reuse] SendAsync retry={sendOk}");
                 }
