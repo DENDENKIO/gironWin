@@ -17,6 +17,7 @@ namespace gironWin
         public int      MaxTurns        { get; set; }
         public int      TurnIntervalMs  { get; set; } = 500;
         public int      GenerationTimeoutMs { get; set; } = 90000;
+        public int      PostSendWaitMs      { get; set; } = 5000;
         public string   Topic { get; set; } = string.Empty;
 
         // FR-06: 役割プロンプト
@@ -31,5 +32,8 @@ namespace gironWin
 
         // Phase 5: 研究モード
         public bool ResearchMode { get; set; }
+
+        // NFR-02: 承認ポリシー（null の場合は ApprovalPolicy.Default を使用）
+        public ApprovalPolicy? ApprovalPolicy { get; set; }
     }
 }

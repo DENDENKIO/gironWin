@@ -29,6 +29,7 @@ namespace gironWin
         public string Status                   { get; set; } = string.Empty;
         public string ParticipantRole          { get; set; } = string.Empty;
         public string SessionId                { get; set; } = string.Empty;
+        public string MessageId                { get; set; } = System.Guid.NewGuid().ToString();
 
         /// <summary>FR-11: 1行要約（Phase 3 SummaryService が自動生成）</summary>
         public string Summary    { get; set; } = string.Empty;

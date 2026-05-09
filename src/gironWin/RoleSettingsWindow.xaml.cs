@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -6,46 +5,72 @@ namespace gironWin
 {
     public partial class RoleSettingsWindow : Window
     {
-        public string LeftPrompt  { get; private set; } = string.Empty;
-        public string RightPrompt { get; private set; } = string.Empty;
+        public PromptProfile? ResultProfile { get; private set; }
 
-        public RoleSettingsWindow(string currentLeft, string currentRight)
+        private readonly PromptProfile _current;
+
+        public RoleSettingsWindow(PromptProfile? current = null)
         {
             InitializeComponent();
+            _current = current ?? PromptProfile.Default;
+            LoadProfile(_current);
+        }
 
-            // プリセットを ComboBox に登録
-            foreach (var p in PromptProfile.Presets)
+        private void LoadProfile(PromptProfile p)
+        {
+            LeftNameTextBox.Text    = p.LeftName;
+            RightNameTextBox.Text   = p.RightName;
+            LeftPromptTextBox.Text  = p.LeftSystemPrompt;
+            RightPromptTextBox.Text = p.RightSystemPrompt;
+            TopicTextBox.Text       = p.Topic;
+
+            // \u30d7\u30ea\u30bb\u30c3\u30c8\u30b3\u30f3\u30dc
+            ProfileComboBox.SelectedIndex = p.ProfileId switch
             {
-                LeftPresetCombo.Items.Add(p);
-                RightPresetCombo.Items.Add(p);
-            }
-
-            LeftPromptTextBox.Text  = currentLeft;
-            RightPromptTextBox.Text = currentRight;
-
-            // 現在値に一致するプリセットを初期選択
-            LeftPresetCombo.SelectedItem  = PromptProfile.Presets.FirstOrDefault(p => p.SystemPrompt == currentLeft)
-                                             ?? PromptProfile.Presets[0];
-            RightPresetCombo.SelectedItem = PromptProfile.Presets.FirstOrDefault(p => p.SystemPrompt == currentRight)
-                                             ?? PromptProfile.Presets[0];
+                "debate"   => 1,
+                "research" => 2,
+                "critique" => 3,
+                _          => 0
+            };
         }
 
-        private void LeftPresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        // ---------------------------------------------------------------
+        // \u30d7\u30ea\u30bb\u30c3\u30c8\u5909\u66f4
+        // ---------------------------------------------------------------
+        private void ProfileComboBox_SelectionChanged(
+            object sender, SelectionChangedEventArgs e)
         {
-            if (LeftPresetCombo.SelectedItem is PromptProfile p)
-                LeftPromptTextBox.Text = p.SystemPrompt;
+            if (ProfileComboBox == null || LeftNameTextBox == null) return;
+            var preset = ProfileComboBox.SelectedIndex switch
+            {
+                1 => PromptProfile.DebatePreset,
+                2 => PromptProfile.ResearchPreset,
+                3 => PromptProfile.CritiquePreset,
+                _ => PromptProfile.Default
+            };
+            LoadProfile(preset);
         }
 
-        private void RightPresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (RightPresetCombo.SelectedItem is PromptProfile p)
-                RightPromptTextBox.Text = p.SystemPrompt;
-        }
-
+        // ---------------------------------------------------------------
+        // OK / Cancel
+        // ---------------------------------------------------------------
         private void OkButton_Click(object sender, RoutedEventArgs e)
         {
-            LeftPrompt  = LeftPromptTextBox.Text.Trim();
-            RightPrompt = RightPromptTextBox.Text.Trim();
+            ResultProfile = new PromptProfile
+            {
+                LeftName          = LeftNameTextBox.Text.Trim(),
+                RightName         = RightNameTextBox.Text.Trim(),
+                LeftSystemPrompt  = LeftPromptTextBox.Text.Trim(),
+                RightSystemPrompt = RightPromptTextBox.Text.Trim(),
+                Topic             = TopicTextBox.Text.Trim(),
+                ProfileId         = ProfileComboBox.SelectedIndex switch
+                {
+                    1 => "debate",
+                    2 => "research",
+                    3 => "critique",
+                    _ => "custom"
+                }
+            };
             DialogResult = true;
             Close();
         }

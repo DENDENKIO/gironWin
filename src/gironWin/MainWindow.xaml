@@ -56,6 +56,9 @@
             </MenuItem>
             <MenuItem Header="討論">
                 <MenuItem x:Name="MenuPreset" Header="プリセット選択..." Click="MenuPreset_Click"/>
+                <MenuItem x:Name="MenuRoleSettings" Header="⚙ ロール設定(_R)" Click="MenuRoleSettings_Click"/>
+                <Separator/>
+                <MenuItem x:Name="MenuIntervention" Header="✋ 介入(_I)" Click="MenuIntervention_Click"/>
                 <Separator/>
                 <MenuItem x:Name="MenuResearchNote" Header="研究ノートを表示" Click="MenuResearchNote_Click" IsEnabled="False"/>
             </MenuItem>
@@ -96,13 +99,27 @@
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
 
+                <!-- 議題 -->
+                <TextBlock Text="議題:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                <TextBox x:Name="TopicTextBox" Width="180" Margin="0,0,8,0"
+                         VerticalContentAlignment="Center"
+                         ToolTip="エクスポート時の議題として使用されます"/>
+
+                <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
+
                 <!-- 開始/停止 -->
                 <Button x:Name="StartButton" Content="▶ 開始" Style="{StaticResource PrimaryButton}"
                         Click="StartButton_Click" Margin="0,0,4,0"/>
                 <Button x:Name="StopButton" Content="■ 停止" Style="{StaticResource DangerButton}"
                         Click="StopButton_Click" IsEnabled="False" Margin="0,0,4,0"/>
                 <Button x:Name="PauseResumeButton" Content="⏸ 一時停止" Style="{StaticResource SecondaryButton}"
-                        Click="PauseResumeButton_Click" IsEnabled="False" Margin="0,0,8,0"/>
+                        Click="PauseResumeButton_Click" IsEnabled="False" Margin="0,0,4,0"/>
+
+                <!-- 介入ボタン -->
+                <Button x:Name="InterventionButton" Content="✋ 介入"
+                        Click="InterventionButton_Click" IsEnabled="False"
+                        Margin="0,0,8,0" Padding="10,4"
+                        Background="#5D4037" Foreground="White" BorderThickness="0" Cursor="Hand"/>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
 

@@ -18,8 +18,9 @@ namespace gironWin
         private readonly ApprovalQueue         _approvalQueue;
         private readonly AiSiteAdapterResolver _adapterResolver;
         private readonly SummaryService        _summaryService  = new();
-        private readonly ResearchModeService   _researchService = new();
+        private readonly ResearchService       _researchService = new();
         private readonly LogRepository         _logRepository;
+        private readonly SessionRepository     _sessionRepository;
 
         private CancellationTokenSource? _cts;
         private bool _isPaused;
@@ -28,7 +29,7 @@ namespace gironWin
         public bool IsRunning => _cts != null && !_cts.IsCancellationRequested;
         public bool IsPaused  => _isPaused;
 
-        public ResearchModeService ResearchService => _researchService;
+        public ResearchService ResearchService => _researchService;
         public SummaryService      SummaryService  => _summaryService;
 
         public event EventHandler<string>? StatusChanged;
@@ -43,12 +44,14 @@ namespace gironWin
             TransferService transferService,
             ApprovalQueue approvalQueue,
             AiSiteAdapterResolver adapterResolver,
-            LogRepository logRepository)
+            LogRepository logRepository,
+            SessionRepository sessionRepository)
         {
-            _transferService  = transferService;
-            _approvalQueue    = approvalQueue;
-            _adapterResolver  = adapterResolver;
-            _logRepository    = logRepository;
+            _transferService    = transferService;
+            _approvalQueue      = approvalQueue;
+            _adapterResolver    = adapterResolver;
+            _logRepository      = logRepository;
+            _sessionRepository  = sessionRepository;
         }
 
         // ---------------------------------------------------------------
@@ -112,6 +115,10 @@ namespace gironWin
             // 各ターンの TransferRecord 一覧（司会サマリー用）
             var turnRecords = new List<TransferRecord>();
 
+            // ★ 追加: 連続失敗カウンター
+            int consecutiveFailCount = 0;
+            const int MaxConsecutiveFail = 3;
+
             try
             {
                 while (!ct.IsCancellationRequested)
@@ -134,9 +141,10 @@ namespace gironWin
                     bool isThirdTurn = ShouldInsertThirdSeat(config.ThirdSeat, turn);
                     if (isThirdTurn)
                     {
-                        bool ok = await RunThirdSeatTurnAsync(config, turnRecords, ct);
+                        bool ok = await RunThirdSeatTurnAsync(config, turnRecords, turn, ct);
                         if (!ok) break;
                         phaseIndex++;
+                        consecutiveFailCount = 0;
                         continue;
                     }
 
@@ -176,8 +184,16 @@ namespace gironWin
                         NotifyStatus($"ターン {turn}: 新規テキスト未検出。再試行します。");
                         await Task.Delay(800, ct);
                         turn--;
+                        consecutiveFailCount++;
+                        if (consecutiveFailCount >= MaxConsecutiveFail)
+                        {
+                            NotifyStatus($"連続 {MaxConsecutiveFail} 回テキスト未検出。討論を停止します。");
+                            break;
+                        }
                         continue;
                     }
+
+                    consecutiveFailCount = 0; // ★ 成功したらリセット
 
                     if (isLeftTurn) leftSnapshot  = generatedText;
                     else            rightSnapshot = generatedText;
@@ -185,9 +201,14 @@ namespace gironWin
                     // Phase 5: 研究モード タグ抽出
                     if (config.ResearchMode)
                     {
-                        var tags = _researchService.ExtractAndRegister(generatedText, turn);
+                        string msgId = $"msg-{turn}-{(isLeftTurn ? "L" : "R")}";
+                        var tags = _researchService.ExtractAndAdd(generatedText, turn, msgId);
                         if (tags.Count > 0)
+                        {
                             ResearchTagsExtracted?.Invoke(this, tags);
+                            foreach (var tag in tags)
+                                await _sessionRepository.AppendResearchTagAsync(tag);
+                        }
                     }
 
                     // 1行要約
@@ -205,15 +226,27 @@ namespace gironWin
                         ? $"{prefix}{body}"
                         : $"{tgtPrompt}\n\n{prefix}{body}";
 
-                    // 承認待機
-                    if (config.RequireApproval)
+                    // 承認待機（ApprovalPolicy による動的判定）
+                    bool needsApproval = config.RequireApproval;
+                    if (config.ApprovalPolicy != null)
                     {
-                        NotifyStatus($"ターン {turn}: 承認待ち...");
+                        // 直前ターンに引用があったかを判定（新しい rec はまだ未生成）
+                        bool hasQuote = turnRecords.Count > 0 &&
+                                        (turnRecords[turnRecords.Count - 1].QuotedMessageIds?.Count ?? 0) > 0;
+                        needsApproval = config.ApprovalPolicy.ShouldRequireApproval(
+                            generatedText,
+                            hasQuote:        hasQuote,
+                            isAfterRecovery: false);
+                    }
+
+                    if (needsApproval)
+                    {
+                        NotifyStatus($"\u30bf\u30fc\u30f3 {turn}: \u627f\u8a8d\u5f85\u3061...");
                         try
                         {
                             var result = await _approvalQueue.EnqueueAsync(
                                 srcAdapter.SiteName, tgtAdapter.SiteName, transferText, true, ct);
-                            if (!result.Approved) { NotifyStatus($"ターン {turn}: 却下。停止します。"); break; }
+                            if (!result.Approved) { NotifyStatus($"\u30bf\u30fc\u30f3 {turn}: \u5374\u4e0b\u3002\u505c\u6b62\u3057\u307e\u3059\u3002"); break; }
                             transferText = result.Text;
                         }
                         catch (OperationCanceledException) { break; }
@@ -225,17 +258,33 @@ namespace gironWin
                         submit: true, appendBridge: false, manualText: transferText);
 
                     if (!transferResult.Success)
-                    { NotifyStatus($"ターン {turn}: 送信失敗 → {transferResult.Message}"); break; }
+                    {
+                        // ★ break → リトライに変更（連続失敗のみ停止）
+                        NotifyStatus($"ターン {turn}: 送信失敗 → {transferResult.Message}  (2秒後リトライ)");
+                        await Task.Delay(2000, ct);
+                        turn--;
+                        consecutiveFailCount++;
+                        if (consecutiveFailCount >= MaxConsecutiveFail)
+                        {
+                            NotifyStatus($"連続 {MaxConsecutiveFail} 回送信失敗。討論を停止します。");
+                            break;
+                        }
+                        continue;
+                    }
+
+                    consecutiveFailCount = 0; // ★ 送信成功でリセット
 
                     // TransferRecord を司会サマリー用リストに追加
                     var rec = new TransferRecord
                     {
-                        TurnNumber  = turn,
-                        Direction   = $"{srcAdapter.SiteName}→{tgtAdapter.SiteName}",
-                        Text        = generatedText,
-                        Summary     = summary
+                        TurnNumber = turn,
+                        Direction  = $"{srcAdapter.SiteName}\u2192{tgtAdapter.SiteName}",
+                        Text       = generatedText,
+                        Summary    = summary,
+                        MessageId  = $"msg-{turn}-{(isLeftTurn ? "L" : "R")}"
                     };
                     turnRecords.Add(rec);
+                    await _sessionRepository.AppendAsync(rec);
 
                     NotifyStatus($"ターン {turn}: 送信完了。");
 
@@ -254,7 +303,8 @@ namespace gironWin
                         break;
                     }
 
-                    await Task.Delay(config.TurnIntervalMs, ct);
+                    NotifyStatus($"\u30bf\u30fc\u30f3 {turn}: \u6b21\u306e\u30bf\u30fc\u30f3\u307e\u3067 {config.PostSendWaitMs / 1000} \u79d2\u5f85\u6a5f...");
+                    await Task.Delay(config.PostSendWaitMs, ct);
                 }
             }
             finally
@@ -274,6 +324,7 @@ namespace gironWin
         private async Task<bool> RunThirdSeatTurnAsync(
             AutoDebateConfig config,
             List<TransferRecord> records,
+            int turn,
             CancellationToken ct)
         {
             var third = config.ThirdSeat;
@@ -290,10 +341,10 @@ namespace gironWin
                 var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
                 ThirdSeatInputRequired?.Invoke(this, new ThirdSeatInputRequest
                 {
-                    Summary      = summary,
-                    Role         = third.Role,
-                    DisplayName  = third.DisplayName,
-                    OnInputReady = text => tcs.TrySetResult(text ?? string.Empty)
+                    TurnNumber = turn,
+                    Context    = summary,
+                    Role       = third.Role.ToString(),
+                    OnSubmit   = text => tcs.TrySetResult(text ?? string.Empty)
                 });
                 try { thirdText = await tcs.Task.WaitAsync(ct); }
                 catch (OperationCanceledException) { return false; }
@@ -395,12 +446,4 @@ namespace gironWin
         private void NotifyStatus(string msg) => StatusChanged?.Invoke(this, msg);
     }
 
-    /// <summary>第3席 Human モードの入力リクエスト</summary>
-    public sealed class ThirdSeatInputRequest
-    {
-        public string     Summary     { get; init; } = string.Empty;
-        public DebateRole Role        { get; init; }
-        public string     DisplayName { get; init; } = string.Empty;
-        public Action<string?>? OnInputReady { get; init; }
-    }
 }

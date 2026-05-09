@@ -8,7 +8,8 @@ using System.Threading.Tasks;
 namespace gironWin
 {
     /// <summary>
-    /// 自動討論の各ターンを JSONL ファイルに追記し、Markdown / JSON エクスポートを提供する。
+    /// NFR-06: セッション永続化。
+    /// TransferRecord に加え ResearchTagEntry / QuoteReference も保存対象とする。
     /// </summary>
     public class SessionRepository
     {
@@ -17,109 +18,183 @@ namespace gironWin
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "gironWin", "sessions");
 
-        private string _jsonlPath = string.Empty;
-        private readonly List<TurnEntry> _entries = new();
+        private string _jsonlPath  = string.Empty;
+        private readonly List<TurnEntry>        _entries      = new();
+        private readonly List<ResearchTagEntry> _researchTags = new();
+        private readonly List<QuoteReference>   _quotes       = new();
         private readonly object _lock = new();
 
-        private record TurnEntry(
-            int    Turn,
-            string Side,
-            string Text,
+        // セッション内の全エントリを外部から参照できるよう公開
+        public IReadOnlyList<TurnEntry>        Entries      => _entries;
+        public IReadOnlyList<ResearchTagEntry> ResearchTags => _researchTags;
+        public IReadOnlyList<QuoteReference>   Quotes       => _quotes;
+
+        // ---------------------------------------------------------------
+        // TurnEntry（内部レコード）
+        // ---------------------------------------------------------------
+
+        public record TurnEntry(
+            int      TurnNumber,
+            string   Side,
+            string   Direction,
+            string   Text,
+            string   Summary,
+            string   MessageId,
             DateTime Timestamp);
 
-        // セッション開始（Start ボタン昨歾に呼び出す）
+        // ---------------------------------------------------------------
+        // セッション開始
+        // ---------------------------------------------------------------
+
         public void StartNewSession()
         {
             lock (_lock)
             {
                 _entries.Clear();
+                _researchTags.Clear();
+                _quotes.Clear();
                 Directory.CreateDirectory(SessionFolder);
                 string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
                 _jsonlPath = Path.Combine(SessionFolder, $"session_{stamp}.jsonl");
             }
         }
 
-        // ターン追記
-        public async Task AppendAsync(int turn, string side, string text)
+        // ---------------------------------------------------------------
+        // ターン追記（TransferRecord 版）
+        // ---------------------------------------------------------------
+
+        public async Task AppendAsync(TransferRecord record)
         {
-            var entry = new TurnEntry(turn, side, text, DateTime.Now);
-            lock (_lock)
-            {
-                _entries.Add(entry);
-            }
+            var entry = new TurnEntry(
+                record.TurnNumber,
+                record.Direction,
+                record.Direction,
+                record.Text    ?? string.Empty,
+                record.Summary ?? string.Empty,
+                record.MessageId,
+                DateTime.Now);
+
+            lock (_lock) { _entries.Add(entry); }
 
             if (string.IsNullOrEmpty(_jsonlPath)) return;
 
             string line = JsonSerializer.Serialize(new
             {
-                turn,
-                side,
-                text,
+                type      = "turn",
+                turn      = entry.TurnNumber,
+                side      = entry.Side,
+                direction = entry.Direction,
+                text      = entry.Text,
+                summary   = entry.Summary,
+                messageId = entry.MessageId,
                 timestamp = entry.Timestamp.ToString("o")
             });
-
             await File.AppendAllTextAsync(_jsonlPath, line + "\n", Encoding.UTF8);
         }
 
-        // Markdown エクスポート → 保存先パスを返す
-        public async Task<string> ExportMarkdownAsync()
+        /// <summary>旧 API 互換ラッパー。</summary>
+        public async Task AppendAsync(int turn, string side, string text)
         {
-            Directory.CreateDirectory(SessionFolder);
-            string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string path  = Path.Combine(SessionFolder, $"export_{stamp}.md");
-
-            var sb = new StringBuilder();
-            sb.AppendLine("# 自動討論ログ");
-            sb.AppendLine();
-            sb.AppendLine($"> エクスポート: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine();
-
-            List<TurnEntry> snapshot;
-            lock (_lock) { snapshot = new List<TurnEntry>(_entries); }
-
-            if (snapshot.Count == 0)
+            var dummy = new TransferRecord
             {
-                sb.AppendLine("レコードがありません。自動討論を開始してからエクスポートしてください。");
-            }
-            else
-            {
-                foreach (var e in snapshot)
-                {
-                    sb.AppendLine($"## ターン {e.Turn} — {e.Side}");
-                    sb.AppendLine($"_({e.Timestamp:HH:mm:ss})_");
-                    sb.AppendLine();
-                    sb.AppendLine(e.Text);
-                    sb.AppendLine();
-                    sb.AppendLine("---");
-                    sb.AppendLine();
-                }
-            }
-
-            await File.WriteAllTextAsync(path, sb.ToString(), Encoding.UTF8);
-            return path;
+                TurnNumber = turn,
+                Direction  = side,
+                Text       = text,
+                Summary    = string.Empty,
+                MessageId  = $"msg-{turn}-{side}"
+            };
+            await AppendAsync(dummy);
         }
 
-        // JSON エクスポート → 保存先パスを返す
+        // ---------------------------------------------------------------
+        // 研究タグ追記
+        // ---------------------------------------------------------------
+
+        public async Task AppendResearchTagAsync(ResearchTagEntry tag)
+        {
+            lock (_lock) { _researchTags.Add(tag); }
+
+            if (string.IsNullOrEmpty(_jsonlPath)) return;
+
+            string line = JsonSerializer.Serialize(new
+            {
+                type       = "researchTag",
+                tagType    = tag.TagType,
+                content    = tag.Content,
+                turnNumber = tag.TurnNumber,
+                messageId  = tag.MessageId
+            });
+            await File.AppendAllTextAsync(_jsonlPath, line + "\n", Encoding.UTF8);
+        }
+
+        // ---------------------------------------------------------------
+        // 引用追記
+        // ---------------------------------------------------------------
+
+        public async Task AppendQuoteAsync(QuoteReference quote)
+        {
+            lock (_lock) { _quotes.Add(quote); }
+
+            if (string.IsNullOrEmpty(_jsonlPath)) return;
+
+            string line = JsonSerializer.Serialize(new
+            {
+                type                = "quote",
+                quoteId             = quote.QuoteId,
+                sourceMessageId     = quote.SourceMessageId,
+                sourceParticipantId = quote.SourceParticipantId,
+                sourceTurnNumber    = quote.SourceTurnNumber,
+                quotedText          = quote.QuotedText,
+                quoteType           = quote.QuoteType
+            });
+            await File.AppendAllTextAsync(_jsonlPath, line + "\n", Encoding.UTF8);
+        }
+
+        // ---------------------------------------------------------------
+        // TransferRecord リストに変換（ExportService に渡す用）
+        // ---------------------------------------------------------------
+
+        public List<TransferRecord> ToTransferRecords()
+        {
+            lock (_lock)
+            {
+                return _entries.ConvertAll(e => new TransferRecord
+                {
+                    TurnNumber = e.TurnNumber,
+                    Direction  = e.Direction,
+                    Text       = e.Text,
+                    Summary    = e.Summary,
+                    MessageId  = e.MessageId
+                });
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Markdown / JSON / txt エクスポート（後方互換）
+        // ---------------------------------------------------------------
+
+        public async Task<string> ExportMarkdownAsync()
+        {
+            var svc = new ExportService();
+            return await svc.ExportMarkdownAsync(
+                ToTransferRecords(),
+                new List<QuoteReference>(_quotes),
+                new List<ResearchTagEntry>(_researchTags));
+        }
+
         public async Task<string> ExportJsonAsync()
         {
-            Directory.CreateDirectory(SessionFolder);
-            string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string path  = Path.Combine(SessionFolder, $"export_{stamp}.json");
+            var svc = new ExportService();
+            return await svc.ExportJsonAsync(
+                ToTransferRecords(),
+                new List<QuoteReference>(_quotes),
+                new List<ResearchTagEntry>(_researchTags));
+        }
 
-            List<TurnEntry> snapshot;
-            lock (_lock) { snapshot = new List<TurnEntry>(_entries); }
-
-            var data = snapshot.ConvertAll(e => new
-            {
-                e.Turn,
-                e.Side,
-                e.Text,
-                Timestamp = e.Timestamp.ToString("o")
-            });
-
-            string json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(path, json, Encoding.UTF8);
-            return path;
+        public async Task<string> ExportTxtAsync()
+        {
+            var svc = new ExportService();
+            return await svc.ExportTxtAsync(ToTransferRecords());
         }
     }
 }

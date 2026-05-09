@@ -12,13 +12,17 @@ namespace gironWin
         // ---------------------------------------------------------------
         // サービス / 状態
         // ---------------------------------------------------------------
-        private readonly AiSiteAdapterResolver _adapterResolver = new();
-        private readonly LogRepository         _logRepository   = new();
+        private readonly AiSiteAdapterResolver _adapterResolver   = new();
+        private readonly LogRepository         _logRepository     = new();
+        private readonly SessionRepository     _sessionRepository = new();
+        private readonly QuoteService          _quoteService      = new();
+        private          ApprovalPolicy        _approvalPolicy    = ApprovalPolicy.Default;
         private          ApprovalQueue?        _approvalQueue;
         private          TransferService?      _transferService;
         private          AutoDebateService?    _debateService;
 
         private          DebatePreset?         _currentPreset;
+        private          PromptProfile         _promptProfile = PromptProfile.Default;
         private readonly ObservableCollection<TransferRecord> _turnRecords = new();
 
         // ---------------------------------------------------------------
@@ -57,30 +61,32 @@ namespace gironWin
         // ---------------------------------------------------------------
         // メニュー
         // ---------------------------------------------------------------
-        private void MenuExportLog_Click(object sender, RoutedEventArgs e)
+        private async void MenuExportLog_Click(object sender, RoutedEventArgs e)
         {
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
-                Filter   = "Markdown|*.md|テキスト|*.txt",
+                Filter   = "Markdown|*.md|JSON|*.json|テキスト|*.txt",
                 FileName = $"giron_{DateTime.Now:yyyyMMdd_HHmmss}"
             };
-            if (dlg.ShowDialog() == true)
-            {
-                var sb = new System.Text.StringBuilder();
-                sb.AppendLine("# 討論ログ");
-                sb.AppendLine();
-                foreach (var r in _turnRecords)
-                {
-                    sb.AppendLine($"## Turn {r.TurnNumber} [{r.Direction}] {r.ApprovalStatusDisplay}");
-                    if (!string.IsNullOrWhiteSpace(r.Summary))
-                        sb.AppendLine($"**要約**: {r.Summary}");
-                    sb.AppendLine();
-                    sb.AppendLine(r.Text);
-                    sb.AppendLine();
-                }
-                System.IO.File.WriteAllText(dlg.FileName, sb.ToString(), System.Text.Encoding.UTF8);
-                SetStatus("ログをエクスポートしました。");
-            }
+            if (dlg.ShowDialog() != true) return;
+
+            var exportService = new ExportService();
+            var records       = _sessionRepository.ToTransferRecords();
+            var quotes        = (System.Collections.Generic.IReadOnlyList<QuoteReference>)
+                                _quoteService.References;
+            var tags          = _sessionRepository.ResearchTags;
+            string topic      = TopicTextBox?.Text?.Trim() ?? string.Empty;
+
+            string tempPath;
+            if (dlg.FileName.EndsWith(".json", System.StringComparison.OrdinalIgnoreCase))
+                tempPath = await exportService.ExportJsonAsync(records, quotes, tags, _currentPreset, topic);
+            else if (dlg.FileName.EndsWith(".txt", System.StringComparison.OrdinalIgnoreCase))
+                tempPath = await exportService.ExportTxtAsync(records, topic);
+            else
+                tempPath = await exportService.ExportMarkdownAsync(records, quotes, tags, _currentPreset, topic);
+
+            System.IO.File.Copy(tempPath, dlg.FileName, overwrite: true);
+            SetStatus($"エクスポート完了: {dlg.FileName}");
         }
 
         private void MenuExit_Click(object sender, RoutedEventArgs e) => Close();
@@ -90,6 +96,77 @@ namespace gironWin
             LogColumn.Width = LogColumn.Width.Value > 10
                 ? new GridLength(0)
                 : new GridLength(280);
+        }
+
+        // ---------------------------------------------------------------
+        // ロール設定
+        // ---------------------------------------------------------------
+        private void MenuRoleSettings_Click(object sender, RoutedEventArgs e)
+        {
+            var win = new RoleSettingsWindow(_promptProfile) { Owner = this };
+            if (win.ShowDialog() == true && win.ResultProfile != null)
+            {
+                _promptProfile = win.ResultProfile;
+                if (TopicTextBox != null)
+                    TopicTextBox.Text = _promptProfile.Topic;
+                SetStatus($"ロール設定を更新しました（{_promptProfile.LeftName} vs {_promptProfile.RightName}）");
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // 介入
+        // ---------------------------------------------------------------
+        private void MenuIntervention_Click(object sender, RoutedEventArgs e)
+            => OpenInterventionWindow();
+
+        private void InterventionButton_Click(object sender, RoutedEventArgs e)
+            => OpenInterventionWindow();
+
+        private void OpenInterventionWindow()
+        {
+            if (_debateService == null || !_debateService.IsRunning)
+            {
+                MessageBox.Show(
+                    "\u8a0e\u8ad6\u3092\u958b\u59cb\u3057\u3066\u304b\u3089\u4ecb\u5165\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+                    "\u4ecb\u5165", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            _debateService.Pause();
+
+            var win = new InterventionWindow { Owner = this };
+            if (win.ShowDialog() == true)
+            {
+                if (win.ShouldSend && !string.IsNullOrWhiteSpace(win.Text))
+                {
+                    _ = InjectInterventionAsync(win.Text, win.Target);
+                    return; // InjectInterventionAsync \u5185\u3067 Resume() \u3059\u308b
+                }
+            }
+
+            // \u30ad\u30e3\u30f3\u30bb\u30eb \u307e\u305f\u306f ResumeOnly
+            _debateService.Resume();
+        }
+
+        private async System.Threading.Tasks.Task InjectInterventionAsync(
+            string text, InterventionTarget target)
+        {
+            async System.Threading.Tasks.Task SendTo(
+                Microsoft.Web.WebView2.Wpf.WebView2 wv, string url)
+            {
+                var adapter = _adapterResolver.Resolve(url);
+                if (adapter == null) return;
+                bool ok = await adapter.SetInputAsync(wv, text);
+                if (ok) await adapter.SendAsync(wv);
+            }
+
+            if (target == InterventionTarget.Left || target == InterventionTarget.Both)
+                await SendTo(LeftWebView, LeftUrlTextBox.Text.Trim());
+            if (target == InterventionTarget.Right || target == InterventionTarget.Both)
+                await SendTo(RightWebView, RightUrlTextBox.Text.Trim());
+
+            SetStatus($"介入テキストを送信しました ({target})");
+            _debateService?.Resume();
         }
 
         // ---------------------------------------------------------------
@@ -163,8 +240,11 @@ namespace gironWin
             // サービス初期化
             _approvalQueue   = new ApprovalQueue();
             _transferService = new TransferService(_adapterResolver, _turnRecords);
+            _sessionRepository.StartNewSession();
+            _quoteService.Clear();   // セッション開始時に引用クリア
             _debateService   = new AutoDebateService(
-                _transferService, _approvalQueue, _adapterResolver, _logRepository);
+                _transferService, _approvalQueue, _adapterResolver,
+                _logRepository, _sessionRepository);
 
             // イベント接続
             _debateService.StatusChanged     += DebateService_StatusChanged;
@@ -180,9 +260,10 @@ namespace gironWin
             var config = BuildConfig();
             _debateService.Start(config);
 
-            StartButton.IsEnabled        = false;
-            StopButton.IsEnabled         = true;
-            PauseResumeButton.IsEnabled  = true;
+            StartButton.IsEnabled         = false;
+            StopButton.IsEnabled          = true;
+            PauseResumeButton.IsEnabled   = true;
+            InterventionButton.IsEnabled  = true;
         }
 
         private void StopButton_Click(object sender, RoutedEventArgs e)
@@ -239,24 +320,42 @@ namespace gironWin
                 WebView       = thirdMode == ThirdSeatMode.AiSite ? null : null // 将来: 第3席WebView
             };
 
+            _approvalPolicy = RequireApprovalCheckBox.IsChecked == true
+                ? ApprovalPolicy.Default
+                : ApprovalPolicy.FullAuto;
+
             var policy = _currentPreset?.TurnPolicy ?? TurnPolicy.RoundRobin;
+
+            // プロンプト: プリセット優先 → PromptProfile にフォールバック
+            string leftPrompt  = !string.IsNullOrWhiteSpace(_currentPreset?.LeftPrompt)
+                ? _currentPreset.LeftPrompt
+                : _promptProfile.LeftSystemPrompt;
+            string rightPrompt = !string.IsNullOrWhiteSpace(_currentPreset?.RightPrompt)
+                ? _currentPreset.RightPrompt
+                : _promptProfile.RightSystemPrompt;
+
+            string topic = TopicTextBox?.Text?.Trim()
+                           ?? _promptProfile.Topic;
 
             var config = new AutoDebateConfig
             {
-                LeftWebView     = LeftWebView,
-                RightWebView    = RightWebView,
-                LeftUrl         = LeftUrlTextBox.Text.Trim(),
-                RightUrl        = RightUrlTextBox.Text.Trim(),
-                RequireApproval = RequireApprovalCheckBox.IsChecked == true,
-                AppendBridge    = AppendBridgeCheckBox.IsChecked    == true,
-                MaxTurns        = maxTurns,
-                TurnIntervalMs  = 500,
+                LeftWebView         = LeftWebView,
+                RightWebView        = RightWebView,
+                LeftUrl             = LeftUrlTextBox.Text.Trim(),
+                RightUrl            = RightUrlTextBox.Text.Trim(),
+                RequireApproval     = RequireApprovalCheckBox.IsChecked == true,
+                ApprovalPolicy      = _approvalPolicy,
+                AppendBridge        = AppendBridgeCheckBox.IsChecked    == true,
+                MaxTurns            = maxTurns,
+                TurnIntervalMs      = 500,
+                PostSendWaitMs      = 5000,
                 GenerationTimeoutMs = 90000,
-                TurnPolicy      = policy,
-                ResearchMode    = ResearchModeCheckBox.IsChecked == true,
-                ThirdSeat       = thirdSeat,
-                LeftSystemPrompt  = _currentPreset?.LeftPrompt  ?? string.Empty,
-                RightSystemPrompt = _currentPreset?.RightPrompt ?? string.Empty
+                TurnPolicy          = policy,
+                ResearchMode        = ResearchModeCheckBox.IsChecked == true,
+                ThirdSeat           = thirdSeat,
+                LeftSystemPrompt    = leftPrompt,
+                RightSystemPrompt   = rightPrompt,
+                Topic               = topic
             };
 
             PolicyLabel.Text = $"Policy: {policy}";
@@ -275,11 +374,12 @@ namespace gironWin
         private void DebateService_DebateStopped(object? sender, EventArgs e)
             => Dispatcher.Invoke(() =>
             {
-                StartButton.IsEnabled       = true;
-                StopButton.IsEnabled        = false;
-                PauseResumeButton.IsEnabled = false;
-                PauseResumeButton.Content   = "⏸ 一時停止";
-                ApprovalPanel.Visibility    = Visibility.Collapsed;
+                StartButton.IsEnabled        = true;
+                StopButton.IsEnabled         = false;
+                PauseResumeButton.IsEnabled  = false;
+                PauseResumeButton.Content    = "⏸ 一時停止";
+                InterventionButton.IsEnabled = false;
+                ApprovalPanel.Visibility     = Visibility.Collapsed;
             });
 
         private void DebateService_ThirdSeatInputRequired(object? sender, ThirdSeatInputRequest req)
@@ -332,8 +432,15 @@ namespace gironWin
         {
             if (TurnLogListBox.SelectedItem is TransferRecord rec)
             {
-                var win = new TextPreviewWindow(rec.Text)
-                { Owner = this, Title = $"Turn {rec.TurnNumber} [{rec.Direction}]" };
+                var win = new TextPreviewWindow(
+                    rec,
+                    _quoteService,
+                    rec.Direction,
+                    _sessionRepository)   // ★ sessionRepository を渡す
+                {
+                    Owner = this,
+                    Title = $"Turn {rec.TurnNumber} [{rec.Direction}]"
+                };
                 win.Show();
             }
         }

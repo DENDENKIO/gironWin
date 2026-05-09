@@ -1,30 +1,36 @@
-using System;
 using System.Windows;
 
 namespace gironWin
 {
     public partial class ThirdSeatWindow : Window
     {
-        private readonly Action<string?> _onInputReady;
+        private readonly ThirdSeatInputRequest _request;
 
         public ThirdSeatWindow(ThirdSeatInputRequest request)
         {
             InitializeComponent();
-            _onInputReady = request.OnInputReady ?? (_ => { });
+            _request = request;
 
-            RoleTitleTextBlock.Text = $"第3席: {request.DisplayName} ({request.Role})";
-            SummaryTextBox.Text    = request.Summary;
+            TurnLabel.Text   = request.TurnNumber.ToString();
+            RoleLabel.Text   = request.Role;
+            ContextLabel.Text = string.IsNullOrWhiteSpace(request.Context)
+                ? "(\u30b3\u30f3\u30c6\u30ad\u30b9\u30c8\u306a\u3057)"
+                : request.Context;
+
+            InputTextBox.Focus();
         }
 
-        private void SendButton_Click(object sender, RoutedEventArgs e)
+        private void SubmitButton_Click(object sender, RoutedEventArgs e)
         {
-            _onInputReady(InputTextBox.Text);
+            string text = InputTextBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(text)) return;
+            _request.OnSubmit?.Invoke(text);
             Close();
         }
 
         private void SkipButton_Click(object sender, RoutedEventArgs e)
         {
-            _onInputReady(null);
+            _request.OnSubmit?.Invoke(string.Empty);
             Close();
         }
     }
