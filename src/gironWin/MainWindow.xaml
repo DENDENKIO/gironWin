@@ -1,199 +1,321 @@
 <Window x:Class="gironWin.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-        mc:Ignorable="d"
-        Title="gironWin"
-        Height="980"
-        Width="1600"
-        WindowStartupLocation="CenterScreen">
+        Title="gironWin" Height="900" Width="1400"
+        Closing="Window_Closing">
+
+    <Window.Resources>
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Background" Value="#0078D4"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style x:Key="DangerButton" TargetType="Button">
+            <Setter Property="Background" Value="#D32F2F"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style x:Key="SecondaryButton" TargetType="Button">
+            <Setter Property="Background" Value="#E0E0E0"/>
+            <Setter Property="Foreground" Value="#333"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+    </Window.Resources>
+
     <Grid>
         <Grid.RowDefinitions>
+            <!-- メニュー -->
             <RowDefinition Height="Auto"/>
+            <!-- ツールバー -->
+            <RowDefinition Height="Auto"/>
+            <!-- 第3席パネル -->
+            <RowDefinition Height="Auto"/>
+            <!-- メインコンテンツ -->
             <RowDefinition Height="*"/>
-            <RowDefinition Height="6"/>
-            <RowDefinition Height="260"/>
-            <RowDefinition Height="28"/>
+            <!-- 承認パネル -->
+            <RowDefinition Height="Auto"/>
+            <!-- ステータスバー -->
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- ツールバー -->
-        <Border Grid.Row="0" Padding="8" Background="#F3F3F3">
-            <WrapPanel Orientation="Horizontal">
+        <!-- =========================================================
+             メニューバー
+        ========================================================= -->
+        <Menu Grid.Row="0">
+            <MenuItem Header="ファイル">
+                <MenuItem Header="ログをエクスポート" Click="MenuExportLog_Click"/>
+                <Separator/>
+                <MenuItem Header="終了" Click="MenuExit_Click"/>
+            </MenuItem>
+            <MenuItem Header="討論">
+                <MenuItem x:Name="MenuPreset" Header="プリセット選択..." Click="MenuPreset_Click"/>
+                <Separator/>
+                <MenuItem x:Name="MenuResearchNote" Header="研究ノートを表示" Click="MenuResearchNote_Click" IsEnabled="False"/>
+            </MenuItem>
+            <MenuItem Header="表示">
+                <MenuItem Header="ログパネルを表示/非表示" Click="MenuToggleLog_Click"/>
+            </MenuItem>
+        </Menu>
 
-                <!-- ===== 左サイト ===== -->
-                <TextBox x:Name="LeftUrlTextBox"
-                         Width="280" Margin="0,0,8,8"
-                         VerticalContentAlignment="Center"
-                         Text="https://www.perplexity.ai/" />
-                <Button x:Name="LeftGoButton" Width="80" Margin="0,0,4,8"
-                        Content="左へ移動" Click="LeftGoButton_Click"/>
-                <Button x:Name="LeftTitleButton" Width="100" Margin="0,0,4,8"
-                        Content="左タイトル取得" Click="LeftTitleButton_Click"
-                        ToolTip="左 WebView のページタイトルをクリップボードにコピーします"/>
-                <Button x:Name="LeftSelectionButton" Width="100" Margin="0,0,16,8"
-                        Content="左選択取得" Click="LeftSelectionButton_Click"
-                        ToolTip="左 WebView で選択中のテキストをクリップボードにコピーします"/>
+        <!-- =========================================================
+             ツールバー (討論制御)
+        ========================================================= -->
+        <Border Grid.Row="1" Background="#F0F0F0" BorderBrush="#CCC" BorderThickness="0,0,0,1">
+            <WrapPanel Margin="8,6" VerticalAlignment="Center">
 
-                <!-- ===== 右サイト ===== -->
-                <TextBox x:Name="RightUrlTextBox"
-                         Width="280" Margin="0,0,8,8"
-                         VerticalContentAlignment="Center"
-                         Text="https://gemini.google.com/app?hl=ja" />
-                <Button x:Name="RightGoButton" Width="80" Margin="0,0,4,8"
-                        Content="右へ移動" Click="RightGoButton_Click"/>
-                <Button x:Name="RightTitleButton" Width="100" Margin="0,0,4,8"
-                        Content="右タイトル取得" Click="RightTitleButton_Click"
-                        ToolTip="右 WebView のページタイトルをクリップボードにコピーします"/>
-                <Button x:Name="RightSelectionButton" Width="100" Margin="0,0,16,8"
-                        Content="右選択取得" Click="RightSelectionButton_Click"
-                        ToolTip="右 WebView で選択中のテキストをクリップボードにコピーします"/>
+                <!-- 左席URL -->
+                <TextBlock Text="左席:" VerticalAlignment="Center" Margin="0,0,4,0" FontWeight="Bold"/>
+                <TextBox x:Name="LeftUrlTextBox" Width="200" Margin="0,0,8,0"
+                         Text="https://www.perplexity.ai/" VerticalContentAlignment="Center"/>
 
-                <!-- ===== 転送オプション ===== -->
-                <CheckBox x:Name="AppendBridgeCheckBox" Margin="0,4,12,8"
-                          VerticalAlignment="Center" IsChecked="True"
-                          Content="橋渡し文を付ける" />
-                <CheckBox x:Name="ConfirmBeforeSendCheckBox" Margin="0,4,12,8"
-                          VerticalAlignment="Center" IsChecked="False"
-                          Content="送信前確認" />
+                <!-- 右席URL -->
+                <TextBlock Text="右席:" VerticalAlignment="Center" Margin="0,0,4,0" FontWeight="Bold"/>
+                <TextBox x:Name="RightUrlTextBox" Width="200" Margin="0,0,8,0"
+                         Text="https://gemini.google.com/" VerticalContentAlignment="Center"/>
 
-                <!-- ===== 手動転送 ===== -->
-                <Button x:Name="SendLeftSelectionToRightInputButton" Width="120" Margin="0,0,8,8"
-                        Content="左→右入力" Click="SendLeftSelectionToRightInputButton_Click"/>
-                <Button x:Name="SendLeftSelectionToRightSubmitButton" Width="120" Margin="0,0,8,8"
-                        Content="左→右送信" Click="SendLeftSelectionToRightSubmitButton_Click"/>
-                <Button x:Name="SendRightSelectionToLeftInputButton" Width="120" Margin="0,0,8,8"
-                        Content="右→左入力" Click="SendRightSelectionToLeftInputButton_Click"/>
-                <Button x:Name="SendRightSelectionToLeftSubmitButton" Width="120" Margin="0,0,16,8"
-                        Content="右→左送信" Click="SendRightSelectionToLeftSubmitButton_Click"/>
+                <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
 
-                <!-- ===== 自動討論 ===== -->
-                <Button x:Name="StartAutoDebateButton" Content="▶ 自動開始" Width="90" Margin="0,0,4,8"
-                        Click="StartAutoDebateButton_Click"/>
-                <Button x:Name="StopAutoDebateButton" Content="■ 停止" Width="70" Margin="0,0,4,8"
-                        IsEnabled="False" Click="StopAutoDebateButton_Click"/>
-                <Button x:Name="PauseResumeButton" Content="一時停止" Width="80" Margin="0,0,8,8"
-                        IsEnabled="False" Click="PauseResumeButton_Click"/>
+                <!-- 最大ターン -->
+                <TextBlock Text="最大ターン:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                <TextBox x:Name="MaxTurnsTextBox" Width="45" Text="10" VerticalContentAlignment="Center" Margin="0,0,8,0"/>
 
-                <!-- ===== ターン数制限 ===== -->
-                <TextBlock Text="最大ターン数:" VerticalAlignment="Center" Margin="0,0,4,8"/>
-                <TextBox x:Name="MaxTurnsTextBox" Width="50" Margin="0,0,4,8"
-                         VerticalContentAlignment="Center" ToolTip="0 = 無制限" Text="0"/>
-                <TextBlock Text="(0=無制限)" VerticalAlignment="Center"
-                           Foreground="Gray" Margin="0,0,8,8" FontSize="11"/>
-                <TextBlock x:Name="TurnCountTextBlock" Text="ターン: 0"
-                           VerticalAlignment="Center" Margin="0,0,16,8"
-                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
+                <!-- 承認モード -->
+                <CheckBox x:Name="RequireApprovalCheckBox" Content="承認制" IsChecked="True"
+                          VerticalAlignment="Center" Margin="0,0,8,0"/>
 
-                <!-- ===== ログ保存 ===== -->
-                <Button x:Name="SaveLogJsonButton" Content="💾 JSON保存" Width="90" Margin="0,0,4,8"
-                        Click="SaveLogJsonButton_Click"
-                        ToolTip="現在セッションのログを JSON で保存します"/>
-                <Button x:Name="SaveLogMdButton" Content="📄 MD保存" Width="90" Margin="0,0,4,8"
-                        Click="SaveLogMdButton_Click"
-                        ToolTip="現在セッションのログを Markdown で保存します"/>
+                <!-- ブリッジ -->
+                <CheckBox x:Name="AppendBridgeCheckBox" Content="橋渡し文" IsChecked="False"
+                          VerticalAlignment="Center" Margin="0,0,8,0"/>
 
-                <!-- ===== 議題入力 ===== -->
-                <TextBlock Text="議題:" VerticalAlignment="Center" Margin="8,0,4,8"/>
-                <TextBox x:Name="TopicTextBox" Width="200" Margin="0,0,8,8"
-                         VerticalContentAlignment="Center"
-                         ToolTip="討論の議題を入力してください"
-                         Text=""/>
+                <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
 
+                <!-- 開始/停止 -->
+                <Button x:Name="StartButton" Content="▶ 開始" Style="{StaticResource PrimaryButton}"
+                        Click="StartButton_Click" Margin="0,0,4,0"/>
+                <Button x:Name="StopButton" Content="■ 停止" Style="{StaticResource DangerButton}"
+                        Click="StopButton_Click" IsEnabled="False" Margin="0,0,4,0"/>
+                <Button x:Name="PauseResumeButton" Content="⏸ 一時停止" Style="{StaticResource SecondaryButton}"
+                        Click="PauseResumeButton_Click" IsEnabled="False" Margin="0,0,8,0"/>
+
+                <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
+
+                <!-- プリセット表示 -->
+                <TextBlock x:Name="CurrentPresetLabel" Text="(プリセット未選択)"
+                           VerticalAlignment="Center" Foreground="#0078D4" FontStyle="Italic" Margin="4,0,8,0"/>
+
+                <!-- プリセット選択ボタン -->
+                <Button Content="📋 プリセット" Style="{StaticResource SecondaryButton}"
+                        Click="MenuPreset_Click" Margin="0,0,4,0"/>
+
+                <!-- 研究ノートボタン -->
+                <Button x:Name="ResearchNoteButton" Content="🔬 研究ノート" Style="{StaticResource SecondaryButton}"
+                        Click="MenuResearchNote_Click" IsEnabled="False" Margin="0,0,4,0"/>
             </WrapPanel>
         </Border>
 
-        <!-- WebView2 左右ペイン -->
-        <Grid Grid.Row="1" Margin="8,0,8,0">
+        <!-- =========================================================
+             第3席パネル (折り畳み可能)
+        ========================================================= -->
+        <Expander Grid.Row="2" x:Name="ThirdSeatExpander"
+                  Header="第3席 (司会・査読者)" IsExpanded="False"
+                  Background="#FFF8E7" BorderBrush="#FFC107" BorderThickness="0,0,0,1"
+                  Margin="0">
+            <Grid Margin="12,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- モード選択 -->
+                <TextBlock Grid.Column="0" Text="モード:" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="Bold"/>
+                <ComboBox Grid.Column="1" x:Name="ThirdSeatModeCombo" Width="100" Margin="0,0,12,0"
+                          SelectionChanged="ThirdSeatModeCombo_SelectionChanged">
+                    <ComboBoxItem Content="無効" Tag="Disabled" IsSelected="True"/>
+                    <ComboBoxItem Content="人間" Tag="Human"/>
+                    <ComboBoxItem Content="AI サイト" Tag="AiSite"/>
+                </ComboBox>
+
+                <!-- 役割 -->
+                <TextBlock Grid.Column="2" Text="役割:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <ComboBox Grid.Column="3" x:Name="ThirdSeatRoleCombo" Width="110" Margin="0,0,12,0">
+                    <ComboBoxItem Content="司会" Tag="Moderator" IsSelected="True"/>
+                    <ComboBoxItem Content="査読者" Tag="Reviewer"/>
+                    <ComboBoxItem Content="研究者" Tag="Researcher"/>
+                    <ComboBoxItem Content="批判者" Tag="Critic"/>
+                </ComboBox>
+
+                <!-- 介入間隔 -->
+                <TextBlock Grid.Column="4" Text="介入間隔:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                <StackPanel Grid.Column="5" Orientation="Horizontal">
+                    <TextBox x:Name="ThirdSeatIntervalTextBox" Width="40" Text="2"
+                             VerticalContentAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock Text="ターンごと" VerticalAlignment="Center" Margin="0,0,16,0"/>
+
+                    <!-- AI サイトURL (AiSite モード時のみ有効) -->
+                    <TextBlock Text="URL:" VerticalAlignment="Center" Margin="0,0,4,0"
+                               x:Name="ThirdSeatUrlLabel" Visibility="Collapsed"/>
+                    <TextBox x:Name="ThirdSeatUrlTextBox" Width="220"
+                             VerticalContentAlignment="Center" Margin="0,0,12,0"
+                             Visibility="Collapsed"
+                             ToolTip="第3席として使うAIサイトのURL"/>
+
+                    <!-- 表示名 -->
+                    <TextBlock Text="表示名:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBox x:Name="ThirdSeatNameTextBox" Width="80" Text="第3席"
+                             VerticalContentAlignment="Center" Margin="0,0,12,0"/>
+
+                    <!-- 研究モード -->
+                    <CheckBox x:Name="ResearchModeCheckBox" Content="🔬 研究モード" IsChecked="False"
+                              VerticalAlignment="Center" Margin="0,0,8,0"
+                              Checked="ResearchModeCheckBox_Changed" Unchecked="ResearchModeCheckBox_Changed"/>
+                </StackPanel>
+            </Grid>
+        </Expander>
+
+        <!-- =========================================================
+             メインコンテンツ: WebView 左右 + ログパネル
+        ========================================================= -->
+        <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="6"/>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*" MinWidth="300"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="*" MinWidth="300"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition x:Name="LogColumn" Width="280" MinWidth="0"/>
             </Grid.ColumnDefinitions>
-            <wv2:WebView2 x:Name="LeftWebView" Grid.Column="0" />
-            <GridSplitter Grid.Column="1" Width="6"
-                          HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
-            <wv2:WebView2 x:Name="RightWebView" Grid.Column="2" />
-        </Grid>
 
-        <GridSplitter Grid.Row="2" Height="6"
-                      HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                      ResizeDirection="Rows" Background="#D0D0D0"/>
-
-        <!-- 送信履歴パネル -->
-        <Border Grid.Row="3" Margin="8,0,8,8" Padding="8"
-                BorderBrush="#D0D0D0" BorderThickness="1"
-                CornerRadius="6" Background="#FAFAFA">
-            <Grid>
+            <!-- 左席 WebView -->
+            <Grid Grid.Column="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
+                <Border Grid.Row="0" Background="#E3F2FD" Padding="6,3">
+                    <TextBlock x:Name="LeftSiteLabel" Text="左席: Perplexity"
+                               FontWeight="Bold" FontSize="12"/>
+                </Border>
+                <wv2:WebView2 Grid.Row="1" x:Name="LeftWebView"
+                              Source="https://www.perplexity.ai/"
+                              NavigationCompleted="WebView_NavigationCompleted"/>
+            </Grid>
 
-                <DockPanel Grid.Row="0" Margin="0,0,0,8">
-                    <TextBlock Text="送信履歴" FontSize="16" FontWeight="Bold"
-                               VerticalAlignment="Center" />
-                    <Button Content="履歴クリア" Width="100" Margin="12,0,0,0"
-                            Click="ClearHistoryButton_Click"/>
-                    <Button x:Name="QuoteFullButton" Content="引用 (全文)" Width="100" Margin="12,0,0,0"
-                            Click="QuoteFullButton_Click"
-                            ToolTip="選択した履歴を全文引用してクリップボードへコピーします"/>
-                    <Button x:Name="ApproveButton" Content="✔ 承認" Width="80" Margin="8,0,0,0"
-                            Click="ApproveButton_Click"
-                            ToolTip="選択した履歴を承認済みに変更します"/>
-                    <Button x:Name="RejectButton" Content="✘ 却下" Width="80" Margin="4,0,0,0"
-                            Click="RejectButton_Click"
-                            ToolTip="選択した履歴を却下に変更します"/>
-                    <TextBlock x:Name="SessionStatsTextBlock"
-                               Text="" VerticalAlignment="Center" Margin="16,0,0,0"
-                               Foreground="Gray" FontSize="11"/>
-                </DockPanel>
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="#DDD"/>
 
-                <ListView Grid.Row="1"
-                          ItemsSource="{Binding TransferRecords}"
-                          x:Name="TransferHistoryListView"
-                          MouseDoubleClick="TransferHistoryListView_MouseDoubleClick">
-                    <ListView.ContextMenu>
-                        <ContextMenu>
-                            <MenuItem Header="全文コピー" Click="CopySelectedHistoryTextMenuItem_Click"/>
-                            <MenuItem Header="詳細表示" Click="OpenSelectedHistoryPreviewMenuItem_Click"/>
-                            <Separator/>
-                            <MenuItem Header="左へ入力" Click="ReuseToLeftInputMenuItem_Click"/>
-                            <MenuItem Header="左へ送信" Click="ReuseToLeftSubmitMenuItem_Click"/>
-                            <MenuItem Header="右へ入力" Click="ReuseToRightInputMenuItem_Click"/>
-                            <MenuItem Header="右へ送信" Click="ReuseToRightSubmitMenuItem_Click"/>
-                            <Separator/>
-                            <MenuItem Header="引用 (全文) → クリップボード" Click="QuoteFullMenuItem_Click"/>
-                            <MenuItem Header="承認済みに変更" Click="ApproveMenuItem_Click"/>
-                            <MenuItem Header="却下に変更" Click="RejectMenuItem_Click"/>
-                            <MenuItem Header="段落一覧を表示" Click="ShowParagraphsMenuItem_Click"/>
-                        </ContextMenu>
-                    </ListView.ContextMenu>
-                    <ListView.View>
-                        <GridView>
-                            <GridViewColumn Header="時刻" Width="145" DisplayMemberBinding="{Binding TimestampText}" />
-                            <GridViewColumn Header="方向" Width="175" DisplayMemberBinding="{Binding Direction}" />
-                            <GridViewColumn Header="ターン" Width="55" DisplayMemberBinding="{Binding TurnNumber}" />
-                            <GridViewColumn Header="役割" Width="80" DisplayMemberBinding="{Binding ParticipantRole}" />
-                            <GridViewColumn Header="送信種別" Width="80" DisplayMemberBinding="{Binding SubmittedText}" />
-                            <GridViewColumn Header="承認状態" Width="90" DisplayMemberBinding="{Binding ApprovalStatusText}" />
-                            <GridViewColumn Header="段落" Width="60" DisplayMemberBinding="{Binding ParagraphCountText}" />
-                            <GridViewColumn Header="内容" Width="720" DisplayMemberBinding="{Binding PreviewText}" />
-                        </GridView>
-                    </ListView.View>
-                </ListView>
+            <!-- 右席 WebView -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Border Grid.Row="0" Background="#E8F5E9" Padding="6,3">
+                    <TextBlock x:Name="RightSiteLabel" Text="右席: Gemini"
+                               FontWeight="Bold" FontSize="12"/>
+                </Border>
+                <wv2:WebView2 Grid.Row="1" x:Name="RightWebView"
+                              Source="https://gemini.google.com/"
+                              NavigationCompleted="WebView_NavigationCompleted"/>
+            </Grid>
+
+            <GridSplitter Grid.Column="3" Width="5" HorizontalAlignment="Stretch" Background="#DDD"/>
+
+            <!-- ログパネル -->
+            <Grid Grid.Column="4" x:Name="LogPanel">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Border Grid.Row="0" Background="#F3E5F5" Padding="6,3">
+                    <TextBlock Text="討論ログ" FontWeight="Bold" FontSize="12"/>
+                </Border>
+                <ListBox Grid.Row="1" x:Name="TurnLogListBox"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         SelectionChanged="TurnLogListBox_SelectionChanged">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="4,3" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding TurnNumber, StringFormat='T{0}'}"
+                                                   FontWeight="Bold" FontSize="11" Foreground="#555" Margin="0,0,4,0"/>
+                                        <TextBlock Text="{Binding Direction}" FontSize="10" Foreground="#888"/>
+                                        <TextBlock Text="{Binding ApprovalStatusDisplay}" Margin="4,0,0,0" FontSize="12"/>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding Summary}" TextWrapping="Wrap"
+                                               FontSize="11" Foreground="#333" MaxWidth="240"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Grid>
+
+        <!-- =========================================================
+             承認パネル
+        ========================================================= -->
+        <Border Grid.Row="4" x:Name="ApprovalPanel"
+                Background="#FFF9C4" BorderBrush="#FBC02D" BorderThickness="0,1,0,1"
+                Visibility="Collapsed">
+            <Grid Margin="8,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center">
+                    <TextBlock x:Name="ApprovalTitleLabel" Text="承認待ち:"
+                               FontWeight="Bold" FontSize="12"/>
+                    <TextBlock x:Name="ApprovalDirectionLabel" Text="" FontSize="11" Foreground="#666"/>
+                </StackPanel>
+
+                <TextBox Grid.Column="1" x:Name="ApprovalTextBox"
+                         TextWrapping="Wrap" MaxHeight="80" MinHeight="40"
+                         VerticalScrollBarVisibility="Auto"
+                         AcceptsReturn="True" FontSize="12"
+                         VerticalContentAlignment="Top" Padding="4"/>
+
+                <StackPanel Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center">
+                    <Button Content="✔ 承認" Style="{StaticResource PrimaryButton}"
+                            Click="ApproveButton_Click" Margin="0,0,0,4"/>
+                    <Button Content="✘ 却下" Style="{StaticResource DangerButton}"
+                            Click="RejectButton_Click"/>
+                </StackPanel>
             </Grid>
         </Border>
 
-        <!-- ステータスバー -->
-        <Border Grid.Row="4" Margin="8,0,8,8" Padding="6,2"
-                BorderBrush="#D0D0D0" BorderThickness="1"
-                CornerRadius="4" Background="#F5F5F5">
-            <DockPanel>
-                <TextBlock Text="状態:" FontWeight="Bold" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                <TextBlock x:Name="StatusTextBlock" Text="準備完了" VerticalAlignment="Center"/>
-            </DockPanel>
-        </Border>
+        <!-- =========================================================
+             ステータスバー
+        ========================================================= -->
+        <StatusBar Grid.Row="5" Background="#ECEFF1">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusTextBlock" Text="準備完了" FontSize="11"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock x:Name="TurnCountLabel" Text="Turn: 0" FontSize="11"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock x:Name="PolicyLabel" Text="Policy: RoundRobin" FontSize="11" Foreground="#555"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem x:Name="ResearchStatusItem" Visibility="Collapsed">
+                <TextBlock x:Name="ResearchTagCountLabel" Text="🔬 タグ: 0" FontSize="11" Foreground="DarkOrange"/>
+            </StatusBarItem>
+        </StatusBar>
     </Grid>
 </Window>
