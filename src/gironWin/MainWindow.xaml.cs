@@ -267,19 +267,27 @@ namespace gironWin
         {
             if (_autoDebateService.IsRunning) return;
 
+            // ★ ターン数入力欄を読む（パース失敗 or 空 → 0=無制限）
+            int maxTurns = 0;
+            if (!string.IsNullOrWhiteSpace(MaxTurnsTextBox.Text))
+                int.TryParse(MaxTurnsTextBox.Text.Trim(), out maxTurns);
+            if (maxTurns < 0) maxTurns = 0;
+
             _autoDebateService.Start(new AutoDebateConfig
             {
-                LeftWebView = LeftWebView,
+                LeftWebView  = LeftWebView,
                 RightWebView = RightWebView,
-                LeftUrl = LeftUrlTextBox.Text,
-                RightUrl = RightUrlTextBox.Text,
-                AppendBridge = AppendBridgeCheckBox.IsChecked == true,
+                LeftUrl      = LeftUrlTextBox.Text,
+                RightUrl     = RightUrlTextBox.Text,
+                AppendBridge    = AppendBridgeCheckBox.IsChecked == true,
                 RequireApproval = ConfirmBeforeSendCheckBox.IsChecked == true,
-                MaxTurns = 0,
-                TurnIntervalMs = 2000,
+                MaxTurns        = maxTurns,   // ★ UI から反映
+                TurnIntervalMs  = 500,        // ★ 2000ms → 500ms に高速化
                 GenerationTimeoutMs = 90000
             });
 
+            string limitMsg = maxTurns > 0 ? $"（最大{maxTurns}ターン）" : "（無制限）";
+            SetStatus($"自動討論を開始しました {limitMsg}");
             UpdateDebateButtons(true);
         }
 

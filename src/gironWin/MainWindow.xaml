@@ -97,6 +97,23 @@
                         Margin="0,0,8,8"
                         IsEnabled="False"
                         Click="PauseResumeButton_Click"/>
+
+                <!-- ★ ターン数制限 -->
+                <TextBlock Text="最大ターン数:"
+                           VerticalAlignment="Center"
+                           Margin="0,0,4,8"/>
+                <TextBox x:Name="MaxTurnsTextBox"
+                         Width="50"
+                         Margin="0,0,4,8"
+                         VerticalContentAlignment="Center"
+                         ToolTip="0 = 無制限"
+                         Text="0"/>
+                <TextBlock Text="(0=無制限)"
+                           VerticalAlignment="Center"
+                           Foreground="Gray"
+                           Margin="0,0,16,8"
+                           FontSize="11"/>
+
                 <TextBlock x:Name="TurnCountTextBlock"
                            Text="ターン: 0"
                            VerticalAlignment="Center"
