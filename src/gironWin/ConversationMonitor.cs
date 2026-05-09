@@ -21,9 +21,9 @@ namespace gironWin
         private bool _disposed;
         private bool _completed;
 
-        private const int PollIntervalMs = 250;
+        private const int PollIntervalMs = 120;
         private const int StableRequiredCount = 2;
-        private const int ObserverQuietMs = 600;
+        private const int ObserverQuietMs = 300;
         private const int MinMeaningfulLength = 40;
 
         public ConversationMonitor(IAiSiteAdapter adapter, WebView2 webView)

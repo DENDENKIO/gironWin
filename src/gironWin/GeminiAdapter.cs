@@ -99,45 +99,58 @@ namespace gironWin
         {
             if (webView?.CoreWebView2 == null) return false;
 
+            // ★ Gemini の送信ボタンを幅広いセレクタで探す
+            // mat-icon "send" を持つ button、または data属性、クラス名で探す
             string script = @"
 (() => {
-    const buttonSelectors = [
-        'button[aria-label*=""Send""]',
-        'button[aria-label*=""送信""]',
-        'button[aria-label*=""Submit""]',
-        'button[type=""submit""]'
-    ];
-
-    function isVisible(el) {
+    function isEnabled(el) {
         if (!el) return false;
+        if (el.disabled) return false;
+        if (el.getAttribute('aria-disabled') === 'true') return false;
         const s = window.getComputedStyle(el);
-        return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null;
+        return s.display !== 'none' && s.visibility !== 'hidden';
     }
 
-    for (const sel of buttonSelectors) {
-        const buttons = Array.from(document.querySelectorAll(sel)).filter(isVisible);
-        for (const btn of buttons) {
-            if (!btn.disabled) {
-                btn.click();
-                return true;
-            }
-        }
+    // 1) mat-icon の 'send' を含む親 button
+    const sendIcons = Array.from(document.querySelectorAll('mat-icon, .mat-icon'))
+        .filter(el => (el.textContent || '').trim().toLowerCase() === 'send');
+    for (const icon of sendIcons) {
+        const btn = icon.closest('button');
+        if (btn && isEnabled(btn)) { btn.click(); return true; }
     }
 
+    // 2) aria-label に send/送信/submit を含む button
+    const labelSelectors = [
+        'button[aria-label*=""send"" i]',
+        'button[aria-label*=""送信""]',
+        'button[aria-label*=""submit"" i]',
+        'button.send-button',
+        'button[data-test-id*=""send"" i]',
+        'button[jsname]'
+    ];
+    for (const sel of labelSelectors) {
+        const buttons = Array.from(document.querySelectorAll(sel)).filter(isEnabled);
+        for (const btn of buttons) { btn.click(); return true; }
+    }
+
+    // 3) フォーム内の最後の button (type=submit or 最後のボタン)
+    const formBtns = Array.from(document.querySelectorAll('form button')).filter(isEnabled);
+    if (formBtns.length > 0) { formBtns[formBtns.length - 1].click(); return true; }
+
+    // 4) Enter キー (Shift なし)
     const input = document.querySelector('div[contenteditable=""true""][role=""textbox""]')
+        || document.querySelector('rich-textarea div[contenteditable=""true""]')
         || document.querySelector('div[contenteditable=""true""]')
         || document.querySelector('textarea');
 
     if (!input) return false;
-
     input.focus();
-    input.dispatchEvent(new KeyboardEvent('keydown', {
-        bubbles: true, cancelable: true, key: 'Enter', code: 'Enter'
-    }));
-    input.dispatchEvent(new KeyboardEvent('keyup', {
-        bubbles: true, cancelable: true, key: 'Enter', code: 'Enter'
-    }));
-
+    ['keydown','keypress','keyup'].forEach(type => {
+        input.dispatchEvent(new KeyboardEvent(type, {
+            bubbles: true, cancelable: true,
+            key: 'Enter', code: 'Enter', keyCode: 13, which: 13
+        }));
+    });
     return true;
 })();";
 
