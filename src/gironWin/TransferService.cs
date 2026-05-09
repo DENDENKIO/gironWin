@@ -20,9 +20,28 @@ namespace gironWin
             _records = records;
         }
 
-        private void Log(string message)
+        private void Log(string message) => DebugLog?.Invoke(this, message);
+
+        // ★ SendAsync を最大3回試みるヘルパー
+        //   1回目: SetInput直後 600ms待ち
+        //   2回目: 3秒後
+        //   3回目: 10秒後（最終）
+        private async Task<bool> TrySendWithRetryAsync(
+            IAiSiteAdapter adapter, WebView2 webView, string siteName)
         {
-            DebugLog?.Invoke(this, message);
+            int[] waitMs = { 600, 3000, 10000 };
+
+            for (int i = 0; i < waitMs.Length; i++)
+            {
+                await Task.Delay(waitMs[i]);
+                bool ok = await adapter.SendAsync(webView);
+                Log($"[Send] {siteName} attempt={i + 1} result={ok}");
+                if (ok) return true;
+
+                if (i < waitMs.Length - 1)
+                    Log($"[Send] {siteName} retry in {waitMs[i + 1]}ms...");
+            }
+            return false;
         }
 
         public async Task<TransferResult> TransferAsync(
@@ -39,7 +58,6 @@ namespace gironWin
 
             if (sourceAdapter == null)
                 return TransferResult.Fail("送信元サイトのアダプタが見つかりません。");
-
             if (targetAdapter == null)
                 return TransferResult.Fail("送信先サイトのアダプタが見つかりません。");
 
@@ -74,21 +92,9 @@ namespace gironWin
 
             if (submit)
             {
-                // ★ SetInput 後、React の状態反映を待つ（800ms → 600ms に短縮）
-                await Task.Delay(600);
-                bool sendOk = await targetAdapter.SendAsync(targetWebView);
-                Log($"[Transfer] SendAsync={sendOk}");
-
-                // ★ SendAsync が false の場合、150ms 待って1回リトライ
+                bool sendOk = await TrySendWithRetryAsync(targetAdapter, targetWebView, targetAdapter.SiteName);
                 if (!sendOk)
-                {
-                    await Task.Delay(150);
-                    sendOk = await targetAdapter.SendAsync(targetWebView);
-                    Log($"[Transfer] SendAsync retry={sendOk}");
-                }
-
-                if (!sendOk)
-                    return TransferResult.Fail($"送信操作に失敗しました。Target={targetAdapter.SiteName}");
+                    return TransferResult.Fail($"送信操作に失敗しました（3回試行）。Target={targetAdapter.SiteName}");
             }
 
             var record = new TransferRecord
@@ -134,19 +140,9 @@ namespace gironWin
 
             if (submit)
             {
-                await Task.Delay(600);
-                bool sendOk = await targetAdapter.SendAsync(targetWebView);
-                Log($"[Reuse] SendAsync={sendOk}");
-
+                bool sendOk = await TrySendWithRetryAsync(targetAdapter, targetWebView, targetAdapter.SiteName);
                 if (!sendOk)
-                {
-                    await Task.Delay(150);
-                    sendOk = await targetAdapter.SendAsync(targetWebView);
-                    Log($"[Reuse] SendAsync retry={sendOk}");
-                }
-
-                if (!sendOk)
-                    return TransferResult.Fail($"送信操作に失敗しました。Target={targetAdapter.SiteName}");
+                    return TransferResult.Fail($"送信操作に失敗しました（3回試行）。Target={targetAdapter.SiteName}");
             }
 
             return TransferResult.Ok(submit

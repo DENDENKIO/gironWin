@@ -9,7 +9,8 @@ namespace gironWin
 {
     /// <summary>
     /// AI 応答の生成完了を監視する。
-    /// 主判定: 最新本文の文字数増加・本文変化が止まったら完了。
+    /// 主判定: テキスト文字数をリアルタイム監視し、
+    ///         StableQuietMs（デフォルト10秒）増減なしで完了と判断。
     /// 補助判定: MutationObserver による postMessage。
     /// </summary>
     public sealed class ConversationMonitor : IDisposable
@@ -21,10 +22,10 @@ namespace gironWin
         private bool _disposed;
         private bool _completed;
 
-        private const int PollIntervalMs = 120;       // 250 → 120
-        private const int StableRequiredCount = 2;
-        private const int ObserverQuietMs = 300;      // 600 → 300
-        private const int MinMeaningfulLength = 40;
+        private const int PollIntervalMs   = 200;    // ポーリング間隔
+        private const int StableQuietMs    = 10000;  // ★ 文字数が止まってからの静止確認時間（10秒）
+        private const int MinMeaningfulLen = 40;     // 有意テキストの最小文字数
+        private const int ObserverQuietMs  = 300;    // MutationObserver の待機時間
 
         public ConversationMonitor(IAiSiteAdapter adapter, WebView2 webView)
         {
@@ -32,10 +33,6 @@ namespace gironWin
             _webView = webView;
         }
 
-        /// <summary>
-        /// 監視を開始し、生成完了テキストを返す。
-        /// snapshot は監視開始前に取得した既存テキスト。
-        /// </summary>
         public async Task<string> WaitForCompletionAsync(
             string snapshot,
             int timeoutMs,
@@ -53,7 +50,6 @@ namespace gironWin
             {
                 if (_completed) return;
                 if (string.IsNullOrWhiteSpace(text)) return;
-
                 _completed = true;
                 tcs.TrySetResult(text);
                 GenerationDone?.Invoke(this, new GenerationDoneEventArgs(_adapter.SiteName, text));
@@ -62,7 +58,6 @@ namespace gironWin
             void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
             {
                 if (_completed) return;
-
                 try
                 {
                     string raw = e.TryGetWebMessageAsString();
@@ -74,9 +69,7 @@ namespace gironWin
                             Complete(text);
                     }
                 }
-                catch
-                {
-                }
+                catch { }
             }
 
             _webView.CoreWebView2.WebMessageReceived += OnMessage;
@@ -91,16 +84,9 @@ namespace gironWin
 
                 _ = Task.Run(async () =>
                 {
-                    try
-                    {
-                        await PollUntilStableAsync(snapshot, Complete, linkedCts.Token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                    }
-                    catch
-                    {
-                    }
+                    try { await PollUntilStableAsync(snapshot, Complete, linkedCts.Token); }
+                    catch (OperationCanceledException) { }
+                    catch { }
                 }, linkedCts.Token);
 
                 return await tcs.Task;
@@ -109,10 +95,8 @@ namespace gironWin
             {
                 string fallback = (await _adapter.ExtractLatestAsync(_webView))?.Trim() ?? string.Empty;
                 string normalizedSnapshot = (snapshot ?? string.Empty).Trim();
-
                 if (!string.IsNullOrWhiteSpace(fallback) && fallback != normalizedSnapshot)
                     return fallback;
-
                 return string.Empty;
             }
             finally
@@ -129,55 +113,55 @@ namespace gironWin
         {
             string normalizedSnapshot = (snapshot ?? string.Empty).Trim();
 
-            string lastText = normalizedSnapshot;
-            int lastLength = lastText.Length;
+            string lastText   = normalizedSnapshot;
+            int    lastLength = lastText.Length;
 
-            int stableCount = 0;
-            bool seenNewText = false;
+            // ★ 文字数が最後に変化した時刻
+            DateTime lastChangedAt = DateTime.UtcNow;
+            bool     seenNewText   = false;
 
             while (!ct.IsCancellationRequested)
             {
+                await Task.Delay(PollIntervalMs, ct);
+
                 string latestText = (await _adapter.ExtractLatestAsync(_webView))?.Trim() ?? string.Empty;
-                bool hasNewText = !string.IsNullOrWhiteSpace(latestText) && latestText != normalizedSnapshot;
+                bool hasNewText   = !string.IsNullOrWhiteSpace(latestText)
+                                    && latestText != normalizedSnapshot
+                                    && latestText.Length >= MinMeaningfulLen;
 
                 if (!hasNewText)
                 {
-                    stableCount = 0;
-                    await Task.Delay(PollIntervalMs, ct);
+                    // まだ新テキストが出ていない
+                    lastChangedAt = DateTime.UtcNow; // 生成前はタイマーをリセットし続ける
                     continue;
                 }
 
+                // ★ 新テキストが出た
                 seenNewText = true;
-                int latestLength = latestText.Length;
 
-                bool changed = latestLength != lastLength || latestText != lastText;
+                bool lengthChanged = latestText.Length != lastLength;
+                bool textChanged   = latestText != lastText;
 
-                if (changed)
+                if (lengthChanged || textChanged)
                 {
-                    lastText = latestText;
-                    lastLength = latestLength;
-                    stableCount = 0;
-                    await Task.Delay(PollIntervalMs, ct);
+                    // 文字数または内容が変化 → 変化時刻を更新
+                    lastText      = latestText;
+                    lastLength    = latestText.Length;
+                    lastChangedAt = DateTime.UtcNow;
                     continue;
                 }
 
-                stableCount++;
+                // ★ 変化なし → 静止時間を計測
+                double quietMs = (DateTime.UtcNow - lastChangedAt).TotalMilliseconds;
 
-                // 通常の安定判定
-                if (seenNewText && stableCount >= StableRequiredCount)
+                if (seenNewText && quietMs >= StableQuietMs)
                 {
+                    // 10秒間変化がなければ完了
                     onCompleted(latestText);
                     return;
                 }
 
-                // 十分な長さがあり、短時間でも止まったら早期確定
-                if (latestLength >= MinMeaningfulLength && stableCount >= 1)
-                {
-                    onCompleted(latestText);
-                    return;
-                }
-
-                await Task.Delay(PollIntervalMs, ct);
+                // まだ静止が足りないのでループ継続
             }
         }
 
@@ -193,13 +177,16 @@ namespace gironWin
         window.__gironObs = null;
     }}
 
-    window.__gironDone = false;
-    window.__gironTimer = null;
+    window.__gironDone   = false;
+    window.__gironTimer  = null;
+    window.__gironLen    = 0;
+
     const SNAPSHOT = {escapedSnapshot};
-    const QUIET_MS = {ObserverQuietMs};
+    const QUIET_MS  = {ObserverQuietMs};
 
     function getLatestText() {{
         const selectors = [
+            'div[id^=""markdown-content-""]',
             'model-response .message-content',
             '.prose',
             '[data-testid=""answer""]',
@@ -207,14 +194,15 @@ namespace gironWin
             '[data-response-index]',
             '.markdown'
         ];
-
         for (const sel of selectors) {{
             const nodes = Array.from(document.querySelectorAll(sel))
+                .filter(el => {{
+                    const s = window.getComputedStyle(el);
+                    return s.display !== 'none' && s.visibility !== 'hidden';
+                }})
                 .map(x => (x.innerText || x.textContent || '').trim())
                 .filter(x => x.length > 0);
-            if (nodes.length > 0) {{
-                return nodes[nodes.length - 1];
-            }}
+            if (nodes.length > 0) return nodes[nodes.length - 1];
         }}
         return '';
     }}
@@ -222,7 +210,6 @@ namespace gironWin
     function notify(text) {{
         if (window.__gironDone) return;
         if (!text || text === SNAPSHOT) return;
-
         window.__gironDone = true;
         try {{
             chrome.webview.postMessage(JSON.stringify({{
@@ -230,20 +217,28 @@ namespace gironWin
                 text: text,
                 site: '{siteName}'
             }}));
-        }} catch (e) {{}}
+        }} catch(e) {{}}
     }}
 
     window.__gironObs = new MutationObserver(() => {{
         const t = getLatestText();
         if (!t || t === SNAPSHOT) return;
 
-        if (window.__gironTimer) clearTimeout(window.__gironTimer);
-        window.__gironTimer = setTimeout(() => {{
-            const ft = getLatestText();
-            if (ft && ft !== SNAPSHOT) {{
-                notify(ft);
-            }}
-        }}, QUIET_MS);
+        // 文字数が変化したらタイマーリセット
+        const len = t.length;
+        if (len !== window.__gironLen) {{
+            window.__gironLen = len;
+            if (window.__gironTimer) clearTimeout(window.__gironTimer);
+            window.__gironTimer = null;
+        }}
+
+        // タイマーがなければセット（QUIET_MS 後に通知）
+        if (!window.__gironTimer) {{
+            window.__gironTimer = setTimeout(() => {{
+                const ft = getLatestText();
+                if (ft && ft !== SNAPSHOT) notify(ft);
+            }}, QUIET_MS);
+        }}
     }});
 
     window.__gironObs.observe(document.body, {{
