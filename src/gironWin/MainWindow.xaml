@@ -81,20 +81,27 @@
                         Click="SendRightSelectionToLeftSubmitButton_Click"/>
 
                 <Button x:Name="StartAutoDebateButton"
-                        Content="自動開始"
-                        Width="80"
-                        Margin="0,0,8,8"
+                        Content="▶ 自動開始"
+                        Width="90"
+                        Margin="0,0,4,8"
                         Click="StartAutoDebateButton_Click"/>
                 <Button x:Name="StopAutoDebateButton"
-                        Content="停止"
-                        Width="60"
-                        Margin="0,0,8,8"
+                        Content="■ 停止"
+                        Width="70"
+                        Margin="0,0,4,8"
+                        IsEnabled="False"
                         Click="StopAutoDebateButton_Click"/>
-                <Button x:Name="PauseAutoDebateButton"
-                        Content="一時停止/再開"
-                        Width="110"
-                        Margin="0,0,16,8"
-                        Click="PauseAutoDebateButton_Click"/>
+                <Button x:Name="PauseResumeButton"
+                        Content="一時停止"
+                        Width="80"
+                        Margin="0,0,8,8"
+                        IsEnabled="False"
+                        Click="PauseResumeButton_Click"/>
+                <TextBlock x:Name="TurnCountTextBlock"
+                           Text="ターン: 0"
+                           VerticalAlignment="Center"
+                           Margin="0,0,16,8"
+                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
             </WrapPanel>
         </Border>
 

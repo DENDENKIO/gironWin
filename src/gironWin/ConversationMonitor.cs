@@ -2,21 +2,23 @@ using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using System;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace gironWin
 {
     /// <summary>
-    /// WebView2 の WebMessageReceived を監視し、
-    /// AI の生成完了通知（GenerationDone）を C# イベントとして上げる。
+    /// AI の生成完了を検知する。
+    /// 注入時点のスナップショットと比較し、新しいテキストが安定してから通知する。
     /// </summary>
-    public class ConversationMonitor
+    public class ConversationMonitor : IDisposable
     {
         public event EventHandler<GenerationDoneEventArgs>? GenerationDone;
 
         private readonly IAiSiteAdapter _adapter;
         private readonly WebView2 _webView;
-        private bool _isWatching;
+        private bool _disposed;
+        private bool _notified;
 
         public ConversationMonitor(IAiSiteAdapter adapter, WebView2 webView)
         {
@@ -25,43 +27,125 @@ namespace gironWin
         }
 
         /// <summary>
-        /// 監視スクリプトを注入し、次の生成完了を待機する。
+        /// 監視を開始する。
+        /// snapshot: 監視開始直前の「既存テキスト」。これと異なる新テキストが来たら通知。
         /// </summary>
-        public async Task StartWatchingAsync()
+        public async Task StartWatchingAsync(string snapshot, CancellationToken ct = default)
         {
-            if (_isWatching) return;
-            _isWatching = true;
+            if (_webView?.CoreWebView2 == null) return;
 
-            _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
+            _notified = false;
+            string escapedSnapshot = JsonSerializer.Serialize(snapshot);
+
+            // WebMessageReceived を登録
             _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+            ct.Register(() => _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived);
 
-            await _adapter.InjectObserverAsync(_webView);
+            // スナップショット付きで Observer 注入
+            await InjectObserverWithSnapshotAsync(escapedSnapshot);
         }
 
-        public void StopWatching()
+        private async Task InjectObserverWithSnapshotAsync(string escapedSnapshot)
         {
-            _isWatching = false;
-            if (_webView?.CoreWebView2 != null)
-                _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
+            string adapterScript = _adapter.SiteName switch
+            {
+                "Gemini" => @"
+                    Array.from(document.querySelectorAll('model-response .message-content'))
+                         .pop()?.innerText?.trim() ?? ''",
+
+                "Perplexity" => @"
+                    Array.from(document.querySelectorAll('.prose'))
+                         .pop()?.innerText?.trim()
+                    ?? Array.from(document.querySelectorAll('[data-testid=""answer""]'))
+                         .pop()?.innerText?.trim()
+                    ?? ''",
+
+                _ => @"
+                    Array.from(document.querySelectorAll('.prose, model-response .message-content, [data-testid=""answer""]'))
+                         .pop()?.innerText?.trim() ?? ''"
+            };
+
+            string script = $@"
+(() => {{
+    // 既存の Observer をリセット
+    if (window.__gironObserver) {{
+        window.__gironObserver.disconnect();
+        window.__gironObserver = null;
+    }}
+    window.__gironNotified = false;
+    window.__gironQuietTimer = null;
+    const QUIET_MS = 2000;
+    const SNAPSHOT = {escapedSnapshot};
+
+    function getLatestText() {{
+        return {adapterScript};
+    }}
+
+    function notifyDone(text) {{
+        if (window.__gironNotified) return;
+        window.__gironNotified = true;
+        window.__gironObserver?.disconnect();
+        chrome.webview.postMessage(JSON.stringify({{
+            type: 'GenerationDone',
+            text: text,
+            site: '{_adapter.SiteName}'
+        }}));
+    }}
+
+    window.__gironObserver = new MutationObserver(() => {{
+        const text = getLatestText();
+
+        // スナップショットと同じなら無視（古いテキスト）
+        if (!text || text === SNAPSHOT) return;
+
+        // 生成中インジケータが残っている間は通知しない
+        const isGenerating = !!document.querySelector(
+            'button[aria-label*=""Stop""], button[aria-label*=""停止""], ' +
+            '.animate-pulse, [data-generating=""true""]'
+        );
+        if (isGenerating) return;
+
+        // テキストが QUIET_MS の間変化しなければ完了とみなす
+        if (window.__gironQuietTimer) clearTimeout(window.__gironQuietTimer);
+        window.__gironQuietTimer = setTimeout(() => {{
+            const finalText = getLatestText();
+            if (finalText && finalText !== SNAPSHOT) notifyDone(finalText);
+        }}, QUIET_MS);
+    }});
+
+    window.__gironObserver.observe(document.body, {{
+        childList: true, subtree: true, characterData: true
+    }});
+}})();";
+
+            await _webView.ExecuteScriptAsync(script);
         }
 
         private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
+            if (_notified) return;
             try
             {
                 string raw = e.TryGetWebMessageAsString();
-                var msg = JsonSerializer.Deserialize<WebMessagePayload>(raw);
-
-                if (msg?.Type == "GenerationDone")
+                var doc = JsonSerializer.Deserialize<WebMessagePayload>(raw);
+                if (doc?.Type == "GenerationDone")
                 {
-                    _isWatching = false;
+                    _notified = true;
                     _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
                     GenerationDone?.Invoke(this, new GenerationDoneEventArgs(
-                        msg.Site ?? _adapter.SiteName,
-                        msg.Text ?? string.Empty));
+                        doc.Site ?? _adapter.SiteName,
+                        doc.Text ?? string.Empty));
                 }
             }
-            catch { /* 解析失敗は無視 */ }
+            catch { }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            if (_webView?.CoreWebView2 != null)
+                _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
         }
 
         private sealed class WebMessagePayload
@@ -76,7 +160,6 @@ namespace gironWin
     {
         public string SiteName { get; }
         public string Text { get; }
-
         public GenerationDoneEventArgs(string siteName, string text)
         {
             SiteName = siteName;

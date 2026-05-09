@@ -29,7 +29,9 @@ namespace gironWin
         {
             _transferService = new TransferService(_adapterResolver, _transferRecords);
             _autoDebateService = new AutoDebateService(_transferService, _approvalQueue, _adapterResolver);
-            _autoDebateService.StatusChanged += (_, msg) => SetStatus(msg);
+            _autoDebateService.StatusChanged += (_, msg) => Dispatcher.Invoke(() => SetStatus(msg));
+            _autoDebateService.TurnAdvanced += (_, turn) => Dispatcher.Invoke(() => TurnCountTextBlock.Text = $"ターン: {turn}");
+            _autoDebateService.DebateStopped += (_, _) => Dispatcher.Invoke(() => UpdateDebateButtons(false));
 
             await InitializeWebViewsAsync();
             SetStatus("準備完了。");
@@ -255,6 +257,8 @@ namespace gironWin
 
         private void StartAutoDebateButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_autoDebateService.IsRunning) return;
+
             _autoDebateService.Start(new AutoDebateConfig
             {
                 LeftWebView = LeftWebView,
@@ -263,17 +267,40 @@ namespace gironWin
                 RightUrl = RightUrlTextBox.Text,
                 AppendBridge = AppendBridgeCheckBox.IsChecked == true,
                 RequireApproval = ConfirmBeforeSendCheckBox.IsChecked == true,
-                MaxTurns = 0
+                MaxTurns = 0,
+                TurnIntervalMs = 2000,
+                GenerationTimeoutMs = 90000
             });
+
+            UpdateDebateButtons(true);
         }
 
-        private void StopAutoDebateButton_Click(object sender, RoutedEventArgs e) =>
-            _autoDebateService.Stop();
-
-        private void PauseAutoDebateButton_Click(object sender, RoutedEventArgs e)
+        private void StopAutoDebateButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_autoDebateService.IsPaused) _autoDebateService.Resume();
-            else _autoDebateService.Pause();
+            _autoDebateService.Stop();
+            UpdateDebateButtons(false);
+        }
+
+        private void PauseResumeButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_autoDebateService.IsPaused)
+            {
+                _autoDebateService.Resume();
+                PauseResumeButton.Content = "一時停止";
+            }
+            else
+            {
+                _autoDebateService.Pause();
+                PauseResumeButton.Content = "再開";
+            }
+        }
+
+        private void UpdateDebateButtons(bool running)
+        {
+            StartAutoDebateButton.IsEnabled = !running;
+            StopAutoDebateButton.IsEnabled = running;
+            PauseResumeButton.IsEnabled = running;
+            if (!running) PauseResumeButton.Content = "一時停止";
         }
     }
 }
