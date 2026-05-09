@@ -217,6 +217,6 @@ namespace gironWin
         public bool RequireApproval { get; set; } = true;
         public int MaxTurns { get; set; }
         public int TurnIntervalMs { get; set; } = 200;
-        public int GenerationTimeoutMs { get; set; } = 45000;
+        public int GenerationTimeoutMs { get; set; } = 20000;
     }
 }
