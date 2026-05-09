@@ -21,9 +21,10 @@ namespace gironWin
         private bool _disposed;
         private bool _completed;
 
-        private const int PollIntervalMs = 700;
-        private const int StableRequiredCount = 4;
-        private const int ObserverQuietMs = 1800;
+        private const int PollIntervalMs = 250;
+        private const int StableRequiredCount = 2;
+        private const int ObserverQuietMs = 600;
+        private const int MinMeaningfulLength = 40;
 
         public ConversationMonitor(IAiSiteAdapter adapter, WebView2 webView)
         {
@@ -149,7 +150,9 @@ namespace gironWin
                 seenNewText = true;
                 int latestLength = latestText.Length;
 
-                if (latestLength > lastLength || latestText != lastText)
+                bool changed = latestLength != lastLength || latestText != lastText;
+
+                if (changed)
                 {
                     lastText = latestText;
                     lastLength = latestLength;
@@ -160,7 +163,15 @@ namespace gironWin
 
                 stableCount++;
 
+                // 通常の安定判定
                 if (seenNewText && stableCount >= StableRequiredCount)
+                {
+                    onCompleted(latestText);
+                    return;
+                }
+
+                // 十分な長さがあり、短時間でも止まったら早期確定
+                if (latestLength >= MinMeaningfulLength && stableCount >= 1)
                 {
                     onCompleted(latestText);
                     return;

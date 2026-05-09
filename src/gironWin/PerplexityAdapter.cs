@@ -106,23 +106,25 @@ namespace gironWin
 
             string script = @"
 (() => {
-    const buttonSelectors = [
-        'button[aria-label=""Submit""]',
-        'button[aria-label*=""Send""]',
-        'button[aria-label*=""送信""]',
-        'button[type=""submit""]'
-    ];
-
     function isVisible(el) {
         if (!el) return false;
         const s = window.getComputedStyle(el);
         return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null;
     }
 
+    const buttonSelectors = [
+        'button[aria-label=""Submit""]',
+        'button[aria-label*=""Send""]',
+        'button[aria-label*=""送信""]',
+        'button[type=""submit""]',
+        'form button'
+    ];
+
     for (const sel of buttonSelectors) {
         const buttons = Array.from(document.querySelectorAll(sel)).filter(isVisible);
         for (const btn of buttons) {
             if (!btn.disabled) {
+                btn.focus();
                 btn.click();
                 return true;
             }
@@ -139,16 +141,18 @@ namespace gironWin
 
     input.focus();
 
-    ['keydown', 'keypress', 'keyup'].forEach(type => {
-        input.dispatchEvent(new KeyboardEvent(type, {
-            key: 'Enter',
-            code: 'Enter',
-            which: 13,
-            keyCode: 13,
-            bubbles: true,
-            cancelable: true
-        }));
-    });
+    const ev = {
+        key: 'Enter',
+        code: 'Enter',
+        which: 13,
+        keyCode: 13,
+        bubbles: true,
+        cancelable: true
+    };
+
+    input.dispatchEvent(new KeyboardEvent('keydown', ev));
+    input.dispatchEvent(new KeyboardEvent('keypress', ev));
+    input.dispatchEvent(new KeyboardEvent('keyup', ev));
 
     return true;
 })();";

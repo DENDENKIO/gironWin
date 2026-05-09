@@ -232,7 +232,7 @@ namespace gironWin
         public bool AppendBridge { get; set; }
         public bool RequireApproval { get; set; } = true;
         public int MaxTurns { get; set; }
-        public int TurnIntervalMs { get; set; } = 2000;
-        public int GenerationTimeoutMs { get; set; } = 90000;
+        public int TurnIntervalMs { get; set; } = 500;
+        public int GenerationTimeoutMs { get; set; } = 45000;
     }
 }

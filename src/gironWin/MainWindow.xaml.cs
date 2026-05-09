@@ -28,6 +28,14 @@ namespace gironWin
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             _transferService = new TransferService(_adapterResolver, _transferRecords);
+            _transferService.DebugLog += (_, msg) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    StatusTextBlock.Text = msg;
+                    System.Diagnostics.Debug.WriteLine(msg);
+                });
+            };
             _autoDebateService = new AutoDebateService(_transferService, _approvalQueue, _adapterResolver);
             _autoDebateService.StatusChanged += (_, msg) => Dispatcher.Invoke(() => SetStatus(msg));
             _autoDebateService.TurnAdvanced += (_, turn) => Dispatcher.Invoke(() => TurnCountTextBlock.Text = $"ターン: {turn}");
