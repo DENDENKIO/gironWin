@@ -69,12 +69,24 @@ namespace gironWin
         {
             string script = @"
 (() => {
-    // Perplexity の AI 応答は prose クラスの div に格納される
-    const msgs = Array.from(document.querySelectorAll('.prose'));
-    if (msgs.length > 0) return msgs[msgs.length - 1].innerText?.trim() ?? '';
-    // フォールバック
-    const fallback = Array.from(document.querySelectorAll('[data-testid=""answer""]'));
-    if (fallback.length > 0) return fallback[fallback.length - 1].innerText?.trim() ?? '';
+    const selectors = [
+        '.prose',
+        '[data-testid=""answer""]',
+        '[data-testid=""response""]',
+        '.markdown',
+        'main .prose'
+    ];
+
+    for (const sel of selectors) {
+        const nodes = Array.from(document.querySelectorAll(sel))
+            .map(x => (x.innerText || x.textContent || '').trim())
+            .filter(x => x.length > 0);
+
+        if (nodes.length > 0) {
+            return nodes[nodes.length - 1];
+        }
+    }
+
     return '';
 })();";
             return await ExecScriptStringAsync(webView, script);

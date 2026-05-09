@@ -8,24 +8,22 @@ using System.Threading.Tasks;
 namespace gironWin
 {
     /// <summary>
-    /// AI 生成完了を検知する。
-    /// 方式①: MutationObserver（JS側からpostMessage）
-    /// 方式②: C#ポーリング（500ms間隔で直接チェック） ← フォールバック
-    /// 両方併用し、どちらか先に検知した方が勝つ。
+    /// AI 応答の生成完了を監視する。
+    /// 主判定: 最新本文の文字数増加・本文変化が止まったら完了。
+    /// 補助判定: MutationObserver による postMessage。
     /// </summary>
-    public class ConversationMonitor : IDisposable
+    public sealed class ConversationMonitor : IDisposable
     {
         public event EventHandler<GenerationDoneEventArgs>? GenerationDone;
 
         private readonly IAiSiteAdapter _adapter;
         private readonly WebView2 _webView;
         private bool _disposed;
-        private bool _notified;
+        private bool _completed;
 
-        // ポーリング設定
-        private const int PollIntervalMs   = 500;   // チェック間隔
-        private const int QuietStableCount = 4;     // 同じテキストが4回連続＝完了（2秒）
-        private const int WaitForStartMs   = 3000;  // 生成開始を最大3秒待つ
+        private const int PollIntervalMs = 700;
+        private const int StableRequiredCount = 4;
+        private const int ObserverQuietMs = 1800;
 
         public ConversationMonitor(IAiSiteAdapter adapter, WebView2 webView)
         {
@@ -34,181 +32,214 @@ namespace gironWin
         }
 
         /// <summary>
-        /// 監視を開始する。Observer + ポーリングの二重監視。
-        /// snapshot: 監視開始直前の既存テキスト。
+        /// 監視を開始し、生成完了テキストを返す。
+        /// snapshot は監視開始前に取得した既存テキスト。
         /// </summary>
-        public async Task StartWatchingAsync(string snapshot, CancellationToken ct = default)
+        public async Task<string> WaitForCompletionAsync(
+            string snapshot,
+            int timeoutMs,
+            CancellationToken ct = default)
         {
-            if (_webView?.CoreWebView2 == null) return;
+            if (_webView?.CoreWebView2 == null)
+                return string.Empty;
 
-            _notified = false;
+            _completed = false;
 
-            var tcs = new TaskCompletionSource<(string text, string site)>(
+            var tcs = new TaskCompletionSource<string>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
 
-            // --- ① MutationObserver 登録 ---
-            void OnMessage(object? s, CoreWebView2WebMessageReceivedEventArgs e)
+            void Complete(string text)
             {
-                if (_notified) return;
+                if (_completed) return;
+                if (string.IsNullOrWhiteSpace(text)) return;
+
+                _completed = true;
+                tcs.TrySetResult(text);
+                GenerationDone?.Invoke(this, new GenerationDoneEventArgs(_adapter.SiteName, text));
+            }
+
+            void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+            {
+                if (_completed) return;
+
                 try
                 {
                     string raw = e.TryGetWebMessageAsString();
-                    var doc = JsonSerializer.Deserialize<WebMessagePayload>(raw);
-                    if (doc?.Type == "GenerationDone" && !string.IsNullOrWhiteSpace(doc.Text))
-                        tcs.TrySetResult((doc.Text!, doc.Site ?? _adapter.SiteName));
+                    var payload = JsonSerializer.Deserialize<WebMessagePayload>(raw);
+                    if (payload?.Type == "GenerationDone" && !string.IsNullOrWhiteSpace(payload.Text))
+                    {
+                        string text = payload.Text.Trim();
+                        if (text != (snapshot ?? string.Empty).Trim())
+                            Complete(text);
+                    }
                 }
-                catch { }
+                catch
+                {
+                }
             }
 
             _webView.CoreWebView2.WebMessageReceived += OnMessage;
-            ct.Register(() =>
-            {
-                _webView.CoreWebView2.WebMessageReceived -= OnMessage;
-                tcs.TrySetCanceled();
-            });
 
-            await InjectObserverAsync(snapshot);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            linkedCts.CancelAfter(timeoutMs);
+            linkedCts.Token.Register(() => tcs.TrySetCanceled());
 
-            // --- ② C# ポーリング（並列で動かす） ---
-            _ = Task.Run(async () =>
-            {
-                try { await PollUntilDoneAsync(snapshot, tcs, ct); }
-                catch (OperationCanceledException) { tcs.TrySetCanceled(); }
-                catch (Exception ex) { tcs.TrySetException(ex); }
-            }, ct);
-
-            // --- どちらか先に完了したら通知 ---
             try
             {
-                var result = await tcs.Task;
-                if (!_notified)
+                await InjectObserverAsync(snapshot);
+
+                _ = Task.Run(async () =>
                 {
-                    _notified = true;
-                    _webView.CoreWebView2.WebMessageReceived -= OnMessage;
-                    GenerationDone?.Invoke(this,
-                        new GenerationDoneEventArgs(result.site, result.text));
-                }
+                    try
+                    {
+                        await PollUntilStableAsync(snapshot, Complete, linkedCts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+                    catch
+                    {
+                    }
+                }, linkedCts.Token);
+
+                return await tcs.Task;
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException)
+            {
+                string fallback = (await _adapter.ExtractLatestAsync(_webView))?.Trim() ?? string.Empty;
+                string normalizedSnapshot = (snapshot ?? string.Empty).Trim();
+
+                if (!string.IsNullOrWhiteSpace(fallback) && fallback != normalizedSnapshot)
+                    return fallback;
+
+                return string.Empty;
+            }
             finally
             {
-                _webView.CoreWebView2.WebMessageReceived -= OnMessage;
+                if (_webView?.CoreWebView2 != null)
+                    _webView.CoreWebView2.WebMessageReceived -= OnMessage;
             }
         }
 
-        // ---------------------------------------------------------------
-        // ポーリング本体
-        // ---------------------------------------------------------------
-        private async Task PollUntilDoneAsync(
+        private async Task PollUntilStableAsync(
             string snapshot,
-            TaskCompletionSource<(string, string)> tcs,
+            Action<string> onCompleted,
             CancellationToken ct)
         {
-            // フェーズ1: 生成が「開始」するのを待つ（最大 WaitForStartMs）
-            int waitedMs = 0;
-            while (!ct.IsCancellationRequested && waitedMs < WaitForStartMs)
-            {
-                bool generating = await _adapter.IsGeneratingAsync(_webView);
-                string current  = await _adapter.ExtractLatestAsync(_webView);
+            string normalizedSnapshot = (snapshot ?? string.Empty).Trim();
 
-                // 生成が始まった or テキストが変わった → フェーズ2へ
-                if (generating || (!string.IsNullOrWhiteSpace(current) && current != snapshot))
-                    break;
+            string lastText = normalizedSnapshot;
+            int lastLength = lastText.Length;
 
-                await Task.Delay(PollIntervalMs, ct);
-                waitedMs += PollIntervalMs;
-            }
-
-            if (ct.IsCancellationRequested) return;
-
-            // フェーズ2: 生成が「完了」するのを待つ
-            string stableText  = string.Empty;
-            int    stableCount = 0;
+            int stableCount = 0;
+            bool seenNewText = false;
 
             while (!ct.IsCancellationRequested)
             {
-                bool   isGenerating = await _adapter.IsGeneratingAsync(_webView);
-                string latestText   = await _adapter.ExtractLatestAsync(_webView);
+                string latestText = (await _adapter.ExtractLatestAsync(_webView))?.Trim() ?? string.Empty;
+                bool hasNewText = !string.IsNullOrWhiteSpace(latestText) && latestText != normalizedSnapshot;
 
-                bool isNewText = !string.IsNullOrWhiteSpace(latestText) && latestText != snapshot;
-
-                if (!isGenerating && isNewText)
+                if (!hasNewText)
                 {
-                    // テキストが安定しているかカウント
-                    if (latestText == stableText)
-                    {
-                        stableCount++;
-                        if (stableCount >= QuietStableCount)
-                        {
-                            // 完了確定
-                            tcs.TrySetResult((latestText, _adapter.SiteName));
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        stableText  = latestText;
-                        stableCount = 1;
-                    }
-                }
-                else if (isGenerating)
-                {
-                    // まだ生成中 → カウントリセット
                     stableCount = 0;
+                    await Task.Delay(PollIntervalMs, ct);
+                    continue;
+                }
+
+                seenNewText = true;
+                int latestLength = latestText.Length;
+
+                if (latestLength > lastLength || latestText != lastText)
+                {
+                    lastText = latestText;
+                    lastLength = latestLength;
+                    stableCount = 0;
+                    await Task.Delay(PollIntervalMs, ct);
+                    continue;
+                }
+
+                stableCount++;
+
+                if (seenNewText && stableCount >= StableRequiredCount)
+                {
+                    onCompleted(latestText);
+                    return;
                 }
 
                 await Task.Delay(PollIntervalMs, ct);
             }
         }
 
-        // ---------------------------------------------------------------
-        // Observer 注入（補助。主役はポーリング）
-        // ---------------------------------------------------------------
         private async Task InjectObserverAsync(string snapshot)
         {
-            string escapedSnapshot = JsonSerializer.Serialize(snapshot);
-            string siteName        = _adapter.SiteName;
+            string escapedSnapshot = JsonSerializer.Serialize(snapshot ?? string.Empty);
+            string siteName = _adapter.SiteName;
 
-            string latestTextExpr = siteName switch
-            {
-                "Gemini" =>
-                    "Array.from(document.querySelectorAll('model-response .message-content')).pop()?.innerText?.trim() ?? ''",
-                "Perplexity" =>
-                    "(Array.from(document.querySelectorAll('.prose')).pop()?.innerText?.trim()) || " +
-                    "(Array.from(document.querySelectorAll('[data-testid=\"answer\"]')).pop()?.innerText?.trim()) || ''",
-                _ =>
-                    "Array.from(document.querySelectorAll('.prose, model-response .message-content, [data-testid=\"answer\"]')).pop()?.innerText?.trim() ?? ''"
-            };
-
-            // シンプル版 Observer（isGenerating チェックなし・ポーリングに任せる）
             string script = $@"
 (() => {{
-    if (window.__gironObs) {{ window.__gironObs.disconnect(); window.__gironObs = null; }}
-    window.__gironNotified = false;
-    window.__gironTimer    = null;
+    if (window.__gironObs) {{
+        window.__gironObs.disconnect();
+        window.__gironObs = null;
+    }}
+
+    window.__gironDone = false;
+    window.__gironTimer = null;
     const SNAPSHOT = {escapedSnapshot};
-    const QUIET_MS = 1800;
+    const QUIET_MS = {ObserverQuietMs};
 
-    const getLatest = () => {{ return {latestTextExpr}; }};
+    function getLatestText() {{
+        const selectors = [
+            'model-response .message-content',
+            '.prose',
+            '[data-testid=""answer""]',
+            '[data-testid=""response""]',
+            '[data-response-index]',
+            '.markdown'
+        ];
 
-    const notify = (text) => {{
-        if (window.__gironNotified) return;
-        window.__gironNotified = true;
-        window.__gironObs?.disconnect();
-        try {{ chrome.webview.postMessage(JSON.stringify({{ type:'GenerationDone', text, site:'{siteName}' }})); }} catch(e) {{}}
-    }};
+        for (const sel of selectors) {{
+            const nodes = Array.from(document.querySelectorAll(sel))
+                .map(x => (x.innerText || x.textContent || '').trim())
+                .filter(x => x.length > 0);
+            if (nodes.length > 0) {{
+                return nodes[nodes.length - 1];
+            }}
+        }}
+        return '';
+    }}
+
+    function notify(text) {{
+        if (window.__gironDone) return;
+        if (!text || text === SNAPSHOT) return;
+
+        window.__gironDone = true;
+        try {{
+            chrome.webview.postMessage(JSON.stringify({{
+                type: 'GenerationDone',
+                text: text,
+                site: '{siteName}'
+            }}));
+        }} catch (e) {{}}
+    }}
 
     window.__gironObs = new MutationObserver(() => {{
-        const t = getLatest();
+        const t = getLatestText();
         if (!t || t === SNAPSHOT) return;
+
         if (window.__gironTimer) clearTimeout(window.__gironTimer);
         window.__gironTimer = setTimeout(() => {{
-            const ft = getLatest();
-            if (ft && ft !== SNAPSHOT) notify(ft);
+            const ft = getLatestText();
+            if (ft && ft !== SNAPSHOT) {{
+                notify(ft);
+            }}
         }}, QUIET_MS);
     }});
 
-    window.__gironObs.observe(document.body, {{ childList:true, subtree:true, characterData:true }});
+    window.__gironObs.observe(document.body, {{
+        childList: true,
+        subtree: true,
+        characterData: true
+    }});
 }})();";
 
             await _webView.ExecuteScriptAsync(script);
@@ -231,8 +262,12 @@ namespace gironWin
     public sealed class GenerationDoneEventArgs : EventArgs
     {
         public string SiteName { get; }
-        public string Text     { get; }
+        public string Text { get; }
+
         public GenerationDoneEventArgs(string siteName, string text)
-        { SiteName = siteName; Text = text; }
+        {
+            SiteName = siteName;
+            Text = text;
+        }
     }
 }

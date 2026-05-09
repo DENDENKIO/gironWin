@@ -101,15 +101,25 @@ namespace gironWin
         {
             string script = @"
 (() => {
-    // Gemini の応答メッセージは model-response 内の message-content に格納される
-    const responses = Array.from(document.querySelectorAll('model-response .message-content'));
-    if (responses.length === 0) {
-        // フォールバック: 汎用セレクタ
-        const fallback = Array.from(document.querySelectorAll('[data-response-index]'));
-        if (fallback.length > 0) return fallback[fallback.length - 1].innerText?.trim() ?? '';
-        return '';
+    const selectors = [
+        'model-response .message-content',
+        'model-response',
+        '[data-response-index]',
+        '.response-container .markdown',
+        '.markdown'
+    ];
+
+    for (const sel of selectors) {
+        const nodes = Array.from(document.querySelectorAll(sel))
+            .map(x => (x.innerText || x.textContent || '').trim())
+            .filter(x => x.length > 0);
+
+        if (nodes.length > 0) {
+            return nodes[nodes.length - 1];
+        }
     }
-    return responses[responses.length - 1].innerText?.trim() ?? '';
+
+    return '';
 })();";
             return await ExecScriptStringAsync(webView, script);
         }
