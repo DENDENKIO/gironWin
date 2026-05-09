@@ -1,12 +1,104 @@
-﻿<Window x:Class="gironWin.MainWindow"
+<Window x:Class="gironWin.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:gironWin"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
+        Title="gironWin" Height="900" Width="1600"
+        WindowStartupLocation="CenterScreen">
     <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
 
+        <ScrollViewer Grid.Row="0"
+                      HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollBarVisibility="Disabled"
+                      Margin="8">
+            <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBox x:Name="LeftUrlTextBox"
+                         Width="280"
+                         Margin="0,0,8,8"
+                         VerticalContentAlignment="Center"
+                         Text="https://www.perplexity.ai/" />
+
+                <Button x:Name="LeftGoButton"
+                        Width="80"
+                        Margin="0,0,8,8"
+                        Content="左へ移動"
+                        Click="LeftGoButton_Click"/>
+
+                <Button x:Name="LeftTitleButton"
+                        Width="110"
+                        Margin="0,0,8,8"
+                        Content="左タイトル取得"
+                        Click="LeftTitleButton_Click"/>
+
+                <Button x:Name="LeftSelectionButton"
+                        Width="110"
+                        Margin="0,0,8,8"
+                        Content="左選択取得"
+                        Click="LeftSelectionButton_Click"/>
+
+                <TextBox x:Name="RightUrlTextBox"
+                         Width="280"
+                         Margin="0,0,8,8"
+                         VerticalContentAlignment="Center"
+                         Text="https://gemini.google.com/app?hl=ja" />
+
+                <Button x:Name="RightGoButton"
+                        Width="80"
+                        Margin="0,0,8,8"
+                        Content="右へ移動"
+                        Click="RightGoButton_Click"/>
+
+                <Button x:Name="RightTitleButton"
+                        Width="110"
+                        Margin="0,0,8,8"
+                        Content="右タイトル取得"
+                        Click="RightTitleButton_Click"/>
+
+                <Button x:Name="RightSelectionButton"
+                        Width="110"
+                        Margin="0,0,8,8"
+                        Content="右選択取得"
+                        Click="RightSelectionButton_Click"/>
+
+                <CheckBox x:Name="AppendBridgeCheckBox"
+                          Margin="8,0,8,8"
+                          VerticalAlignment="Center"
+                          IsChecked="True"
+                          Content="橋渡し文を付ける" />
+
+                <Button x:Name="SendLeftSelectionToRightInputButton"
+                        Width="150"
+                        Margin="0,0,8,8"
+                        Content="左選択→右入力"
+                        Click="SendLeftSelectionToRightInputButton_Click"/>
+
+                <Button x:Name="SendLeftSelectionToRightSubmitButton"
+                        Width="150"
+                        Margin="0,0,8,8"
+                        Content="左選択→右送信"
+                        Click="SendLeftSelectionToRightSubmitButton_Click"/>
+            </WrapPanel>
+        </ScrollViewer>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="6"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <wv2:WebView2 x:Name="LeftWebView" Grid.Column="0" />
+            <GridSplitter Grid.Column="1"
+                          Width="6"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Stretch"/>
+            <wv2:WebView2 x:Name="RightWebView" Grid.Column="2" />
+        </Grid>
     </Grid>
 </Window>
