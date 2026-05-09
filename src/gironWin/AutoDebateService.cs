@@ -126,6 +126,10 @@ namespace gironWin
                             snapshot,
                             config.GenerationTimeoutMs,
                             ct);
+
+                        // 確定後に少し待って最終全文を再取得（Perplexity 等の複数ブロック対策）
+                        await Task.Delay(400, ct);
+                        generatedText = (await srcAdapter.ExtractLatestAsync(srcWebView))?.Trim() ?? generatedText;
                     }
                     catch (OperationCanceledException)
                     {
@@ -144,9 +148,10 @@ namespace gironWin
 
                     NotifyStatus($"ターン {turn}: 生成完了（{generatedText.Length}文字）");
 
+                    string prefix = $"[Turn {turn} {srcAdapter.SiteName}→{tgtAdapter.SiteName}] ";
                     string transferText = config.AppendBridge
-                        ? $"{generatedText}\n\nこの意見についてどう考えますか？"
-                        : generatedText;
+                        ? $"{prefix}{generatedText}\n\nこの意見についてどう考えますか？"
+                        : $"{prefix}{generatedText}";
 
                     if (config.RequireApproval)
                     {

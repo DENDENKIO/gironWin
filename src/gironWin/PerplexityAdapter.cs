@@ -164,13 +164,12 @@ namespace gironWin
         {
             string script = @"
 (() => {
-    const selectors = [
-        '[data-testid=""answer""]',
-        '[data-testid=""response""]',
-        '.prose',
-        'main .prose',
-        '.markdown'
-    ];
+    function norm(text) {
+        return (text || '')
+            .replace(/\r/g, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
 
     function isVisible(el) {
         if (!el) return false;
@@ -178,15 +177,73 @@ namespace gironWin
         return s.display !== 'none' && s.visibility !== 'hidden';
     }
 
-    for (const sel of selectors) {
-        const nodes = Array.from(document.querySelectorAll(sel))
-            .filter(isVisible)
-            .map(x => (x.innerText || x.textContent || '').trim())
-            .filter(x => x.length > 0);
+    function collectTexts(root) {
+        if (!root) return '';
 
-        if (nodes.length > 0) {
-            return nodes[nodes.length - 1];
+        const blockSelectors = [
+            '.prose',
+            '.markdown',
+            '[data-testid=""answer""]',
+            '[data-testid=""response""]',
+            'p', 'li', 'h1', 'h2', 'h3', 'h4', 'pre', 'code', 'blockquote'
+        ];
+
+        const seen = new Set();
+        const parts = [];
+
+        for (const sel of blockSelectors) {
+            const nodes = Array.from(root.querySelectorAll(sel))
+                .filter(isVisible);
+
+            for (const node of nodes) {
+                const text = norm(node.innerText || node.textContent || '');
+                if (!text) continue;
+                if (seen.has(text)) continue;
+                seen.add(text);
+                parts.push(text);
+            }
         }
+
+        if (parts.length > 0) {
+            return norm(parts.join('\n\n'));
+        }
+
+        return norm(root.innerText || root.textContent || '');
+    }
+
+    // まず「回答全体コンテナ」を広めに探す
+    const answerContainers = [
+        ...Array.from(document.querySelectorAll('[data-testid=""answer""]')),
+        ...Array.from(document.querySelectorAll('[data-testid=""response""]')),
+        ...Array.from(document.querySelectorAll('main .prose')).map(x => x.closest('article, div')),
+        ...Array.from(document.querySelectorAll('.prose')).map(x => x.closest('article, div'))
+    ].filter(Boolean);
+
+    // 重複除去
+    const uniqueContainers = [];
+    const containerSet = new Set();
+    for (const c of answerContainers) {
+        if (!containerSet.has(c)) {
+            containerSet.add(c);
+            uniqueContainers.push(c);
+        }
+    }
+
+    // 後ろから見て、一番新しいコンテナの全文を作る
+    for (let i = uniqueContainers.length - 1; i >= 0; i--) {
+        const container = uniqueContainers[i];
+        const text = collectTexts(container);
+        if (text) return text;
+    }
+
+    // フォールバック: 画面上の prose 群を全部つなぐ
+    const proseTexts = Array.from(document.querySelectorAll('.prose'))
+        .filter(isVisible)
+        .map(x => norm(x.innerText || x.textContent || ''))
+        .filter(Boolean);
+
+    if (proseTexts.length > 0) {
+        return norm(proseTexts.join('\n\n'));
     }
 
     return '';
