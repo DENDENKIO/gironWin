@@ -87,15 +87,14 @@ namespace gironWin
         {
             string script = @"
 (() => {
-    // 送信ボタンが stop 状態のとき生成中
-    const stopBtn = document.querySelector('button[aria-label=""Stop""]');
-    if (stopBtn) return true;
-    // アニメーション中のローダー
-    const loader = document.querySelector('.animate-pulse, [data-generating=""true""]');
-    if (loader) return true;
-    // 送信ボタン disabled
-    const sendBtn = document.querySelector('button[aria-label=""Submit""]');
-    if (sendBtn && sendBtn.disabled) return true;
+    // Submit ボタンが表示されていなければ生成中（Stop ボタン表示中）
+    const submitBtn = document.querySelector(
+        'button[aria-label=""Submit""], button[type=""submit""]'
+    );
+    if (!submitBtn) return true;
+    if (submitBtn.disabled) return true;
+    // streaming クラスが body についていれば生成中
+    if (document.body.classList.contains('streaming')) return true;
     return false;
 })();";
             return await ExecScriptBoolAsync(webView, script);

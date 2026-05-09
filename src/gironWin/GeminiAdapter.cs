@@ -119,16 +119,26 @@ namespace gironWin
         // ---------------------------------------------------------------
         public override async Task<bool> IsGeneratingAsync(WebView2 webView)
         {
+            // 送信ボタンが有効 = 生成完了、無効 = 生成中
             string script = @"
 (() => {
-    // 送信ボタンが disabled / stop ボタンが表示されているとき生成中
-    const stopBtn = document.querySelector('button[aria-label*=""Stop""], button[aria-label*=""停止""]');
-    if (stopBtn && !stopBtn.disabled) return true;
-    const sendBtn = document.querySelector('button[aria-label*=""Send""], button[aria-label*=""送信""], button[aria-label*=""プロンプトを送信""]');
-    if (sendBtn && sendBtn.disabled) return true;
-    // loading インジケータ
-    const loader = document.querySelector('.loading-indicator, [data-loading=""true""], .progress-spinner');
-    if (loader) return true;
+    // 送信ボタンが disabled のとき生成中
+    const sendBtns = document.querySelectorAll(
+        'button[aria-label*=""Send""], button[aria-label*=""送信""], button[aria-label*=""プロンプトを送信""]'
+    );
+    for (const btn of sendBtns) {
+        if (btn.disabled) return true;
+    }
+    // Stop ボタンが表示されているとき生成中
+    const stopBtn = document.querySelector(
+        'button[aria-label*=""Stop""], button[aria-label*=""停止""], button[aria-label*=""生成を停止""]'
+    );
+    if (stopBtn) return true;
+    // loading-container や thinking が表示されているとき
+    const thinking = document.querySelector(
+        '.loading-container, thinking-block, .response-loading'
+    );
+    if (thinking) return true;
     return false;
 })();";
             return await ExecScriptBoolAsync(webView, script);
