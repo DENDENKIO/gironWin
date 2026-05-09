@@ -9,15 +9,12 @@
         WindowStartupLocation="CenterScreen">
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="48"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <ScrollViewer Grid.Row="0"
-                      HorizontalScrollBarVisibility="Auto"
-                      VerticalScrollBarVisibility="Disabled"
-                      Margin="8">
-            <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <Border Grid.Row="0" Padding="8" Background="#F3F3F3">
+            <WrapPanel Orientation="Horizontal">
                 <TextBox x:Name="LeftUrlTextBox"
                          Width="280"
                          Margin="0,0,8,8"
@@ -67,7 +64,7 @@
                         Click="RightSelectionButton_Click"/>
 
                 <CheckBox x:Name="AppendBridgeCheckBox"
-                          Margin="8,0,8,8"
+                          Margin="8,4,8,8"
                           VerticalAlignment="Center"
                           IsChecked="True"
                           Content="橋渡し文を付ける" />
@@ -84,7 +81,7 @@
                         Content="左選択→右送信"
                         Click="SendLeftSelectionToRightSubmitButton_Click"/>
             </WrapPanel>
-        </ScrollViewer>
+        </Border>
 
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
