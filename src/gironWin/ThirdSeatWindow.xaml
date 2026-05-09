@@ -1,0 +1,52 @@
+<Window x:Class="gironWin.ThirdSeatWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="第3席入力" Height="480" Width="640"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="160"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- ヘッダー -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,8">
+            <TextBlock x:Name="RoleTitleTextBlock" FontSize="16" FontWeight="Bold"
+                       Text="第3席: 司会" Foreground="#0078D4"/>
+            <TextBlock Text="現在の議論サマリーを確認し、介入テキストを入力してください。"
+                       FontSize="11" Foreground="Gray" Margin="0,2,0,0"/>
+        </StackPanel>
+
+        <!-- 司会サマリー -->
+        <GroupBox Grid.Row="1" Header="現在のサマリー" Margin="0,0,0,8">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <TextBox x:Name="SummaryTextBox" IsReadOnly="True"
+                         TextWrapping="Wrap" BorderThickness="0"
+                         Background="#F5F5F5" FontSize="11"
+                         VerticalScrollBarVisibility="Auto"/>
+            </ScrollViewer>
+        </GroupBox>
+
+        <TextBlock Grid.Row="2" Text="介入テキスト（空欄でスキップ）:"
+                   Margin="0,0,0,4" FontWeight="SemiBold"/>
+
+        <!-- 入力エリア -->
+        <TextBox Grid.Row="3" x:Name="InputTextBox"
+                 TextWrapping="Wrap" AcceptsReturn="True"
+                 VerticalScrollBarVisibility="Auto"
+                 FontSize="13" Padding="4"/>
+
+        <!-- ボタン -->
+        <StackPanel Grid.Row="4" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button Content="スキップ" Width="90" Margin="0,0,8,0"
+                    Click="SkipButton_Click"/>
+            <Button Content="送信" Width="90" IsDefault="True"
+                    Background="#0078D4" Foreground="White"
+                    Click="SendButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -3,11 +3,11 @@ using Microsoft.Web.WebView2.Wpf;
 namespace gironWin
 {
     /// <summary>
-    /// 自動討論の設定。
-    /// FR-06 役割プロンプトを追加。
+    /// 自動討論の設定。Phase 3-5 拡張版。
     /// </summary>
     public sealed class AutoDebateConfig
     {
+        // 基本
         public WebView2 LeftWebView  { get; set; } = null!;
         public WebView2 RightWebView { get; set; } = null!;
         public string   LeftUrl      { get; set; } = string.Empty;
@@ -17,10 +17,19 @@ namespace gironWin
         public int      MaxTurns        { get; set; }
         public int      TurnIntervalMs  { get; set; } = 500;
         public int      GenerationTimeoutMs { get; set; } = 90000;
+        public string   Topic { get; set; } = string.Empty;
 
-        /// <summary>FR-06: 左席 AI に付加するシステムプロンプト</summary>
+        // FR-06: 役割プロンプト
         public string LeftSystemPrompt  { get; set; } = string.Empty;
-        /// <summary>FR-06: 右席 AI に付加するシステムプロンプト</summary>
         public string RightSystemPrompt { get; set; } = string.Empty;
+
+        // Phase 3: 第3席
+        public ThirdSeatConfig ThirdSeat { get; set; } = new();
+
+        // Phase 4: ターンポリシー
+        public TurnPolicy TurnPolicy { get; set; } = TurnPolicy.RoundRobin;
+
+        // Phase 5: 研究モード
+        public bool ResearchMode { get; set; }
     }
 }
