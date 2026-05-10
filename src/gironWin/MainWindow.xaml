@@ -31,17 +31,11 @@
 
     <Grid>
         <Grid.RowDefinitions>
-            <!-- メニュー -->
             <RowDefinition Height="Auto"/>
-            <!-- ツールバー -->
             <RowDefinition Height="Auto"/>
-            <!-- 第3席パネル -->
             <RowDefinition Height="Auto"/>
-            <!-- メインコンテンツ -->
             <RowDefinition Height="*"/>
-            <!-- 承認パネル -->
             <RowDefinition Height="Auto"/>
-            <!-- ステータスバー -->
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -64,6 +58,9 @@
             </MenuItem>
             <MenuItem Header="表示">
                 <MenuItem Header="ログパネルを表示/非表示" Click="MenuToggleLog_Click"/>
+            </MenuItem>
+            <MenuItem Header="開発">
+                <MenuItem Header="⚙ デバッグログ" Click="MenuDebugLog_Click"/>
             </MenuItem>
         </Menu>
 
@@ -134,11 +131,21 @@
                 <!-- 研究ノートボタン -->
                 <Button x:Name="ResearchNoteButton" Content="🔬 研究ノート" Style="{StaticResource SecondaryButton}"
                         Click="MenuResearchNote_Click" IsEnabled="False" Margin="0,0,4,0"/>
+
+                <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
+
+                <!-- ★ ⚙ デバッグログボタン -->
+                <Button x:Name="DebugLogButton" Content="⚙"
+                        Click="DebugLogButton_Click"
+                        Width="28" Height="24" FontSize="14"
+                        Padding="0" Margin="0,0,0,0"
+                        ToolTip="デバッグログを開く (往復カウント・送信履歴など)"
+                        Background="#607D8B" Foreground="White" BorderThickness="0" Cursor="Hand"/>
             </WrapPanel>
         </Border>
 
         <!-- =========================================================
-             第3席パネル (折り畳み可能)
+             第3席パネル
         ========================================================= -->
         <Expander Grid.Row="2" x:Name="ThirdSeatExpander"
                   Header="第3席 (司会・査読者)" IsExpanded="False"
@@ -154,7 +161,6 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- モード選択 -->
                 <TextBlock Grid.Column="0" Text="モード:" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="Bold"/>
                 <ComboBox Grid.Column="1" x:Name="ThirdSeatModeCombo" Width="100" Margin="0,0,12,0"
                           SelectionChanged="ThirdSeatModeCombo_SelectionChanged">
@@ -163,7 +169,6 @@
                     <ComboBoxItem Content="AI サイト" Tag="AiSite"/>
                 </ComboBox>
 
-                <!-- 役割 -->
                 <TextBlock Grid.Column="2" Text="役割:" VerticalAlignment="Center" Margin="0,0,6,0"/>
                 <ComboBox Grid.Column="3" x:Name="ThirdSeatRoleCombo" Width="110" Margin="0,0,12,0">
                     <ComboBoxItem Content="司会" Tag="Moderator" IsSelected="True"/>
@@ -172,14 +177,12 @@
                     <ComboBoxItem Content="批判者" Tag="Critic"/>
                 </ComboBox>
 
-                <!-- 介入間隔 -->
                 <TextBlock Grid.Column="4" Text="介入間隔:" VerticalAlignment="Center" Margin="0,0,4,0"/>
                 <StackPanel Grid.Column="5" Orientation="Horizontal">
                     <TextBox x:Name="ThirdSeatIntervalTextBox" Width="40" Text="2"
                              VerticalContentAlignment="Center" Margin="0,0,4,0"/>
                     <TextBlock Text="ターンごと" VerticalAlignment="Center" Margin="0,0,16,0"/>
 
-                    <!-- AI サイトURL (AiSite モード時のみ有効) -->
                     <TextBlock Text="URL:" VerticalAlignment="Center" Margin="0,0,4,0"
                                x:Name="ThirdSeatUrlLabel" Visibility="Collapsed"/>
                     <TextBox x:Name="ThirdSeatUrlTextBox" Width="220"
@@ -187,12 +190,10 @@
                              Visibility="Collapsed"
                              ToolTip="第3席として使うAIサイトのURL"/>
 
-                    <!-- 表示名 -->
                     <TextBlock Text="表示名:" VerticalAlignment="Center" Margin="0,0,4,0"/>
                     <TextBox x:Name="ThirdSeatNameTextBox" Width="80" Text="第3席"
                              VerticalContentAlignment="Center" Margin="0,0,12,0"/>
 
-                    <!-- 研究モード -->
                     <CheckBox x:Name="ResearchModeCheckBox" Content="🔬 研究モード" IsChecked="False"
                               VerticalAlignment="Center" Margin="0,0,8,0"
                               Checked="ResearchModeCheckBox_Changed" Unchecked="ResearchModeCheckBox_Changed"/>
@@ -323,7 +324,7 @@
             </StatusBarItem>
             <Separator/>
             <StatusBarItem>
-                <TextBlock x:Name="TurnCountLabel" Text="Turn: 0" FontSize="11"/>
+                <TextBlock x:Name="TurnCountLabel" Text="往復: 0" FontSize="11"/>
             </StatusBarItem>
             <Separator/>
             <StatusBarItem>

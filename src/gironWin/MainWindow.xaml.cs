@@ -25,6 +25,9 @@ namespace gironWin
         private          PromptProfile         _promptProfile = PromptProfile.Default;
         private readonly ObservableCollection<TransferRecord> _turnRecords = new();
 
+        // ★ デバッグログウィンドウ（一度作成したら途中で破棄しない）
+        private readonly DebugLogWindow _debugLogWindow;
+
         // ---------------------------------------------------------------
         // コンストラクタ
         // ---------------------------------------------------------------
@@ -32,6 +35,10 @@ namespace gironWin
         {
             InitializeComponent();
             TurnLogListBox.ItemsSource = _turnRecords;
+
+            // デバッグウィンドウを事前作成（ログを討論開始前からためる）
+            _debugLogWindow = new DebugLogWindow();
+            _debugLogWindow.Owner = this;
         }
 
         // ---------------------------------------------------------------
@@ -98,6 +105,20 @@ namespace gironWin
                 : new GridLength(280);
         }
 
+        // ★ デバッグログウィンドウを開く（メニューから）
+        private void MenuDebugLog_Click(object sender, RoutedEventArgs e)
+            => OpenDebugLogWindow();
+
+        // ★ デバッグログボタン⚙から
+        private void DebugLogButton_Click(object sender, RoutedEventArgs e)
+            => OpenDebugLogWindow();
+
+        private void OpenDebugLogWindow()
+        {
+            _debugLogWindow.Show();
+            _debugLogWindow.Activate();
+        }
+
         // ---------------------------------------------------------------
         // ロール設定
         // ---------------------------------------------------------------
@@ -127,8 +148,8 @@ namespace gironWin
             if (_debateService == null || !_debateService.IsRunning)
             {
                 MessageBox.Show(
-                    "\u8a0e\u8ad6\u3092\u958b\u59cb\u3057\u3066\u304b\u3089\u4ecb\u5165\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-                    "\u4ecb\u5165", MessageBoxButton.OK, MessageBoxImage.Information);
+                    "討論を開始してから介入してください。",
+                    "介入", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -140,11 +161,10 @@ namespace gironWin
                 if (win.ShouldSend && !string.IsNullOrWhiteSpace(win.Text))
                 {
                     _ = InjectInterventionAsync(win.Text, win.Target);
-                    return; // InjectInterventionAsync \u5185\u3067 Resume() \u3059\u308b
+                    return;
                 }
             }
 
-            // \u30ad\u30e3\u30f3\u30bb\u30eb \u307e\u305f\u306f ResumeOnly
             _debateService.Resume();
         }
 
@@ -176,9 +196,7 @@ namespace gironWin
         {
             var win = new PresetSelectorWindow { Owner = this };
             if (win.ShowDialog() == true && win.SelectedPreset != null)
-            {
                 ApplyPreset(win.SelectedPreset);
-            }
         }
 
         private void ApplyPreset(DebatePreset preset)
@@ -187,7 +205,6 @@ namespace gironWin
             CurrentPresetLabel.Text = $"📋 {preset.Name}";
             PolicyLabel.Text        = $"Policy: {preset.TurnPolicy}";
 
-            // 研究モード ON/OFF
             ResearchModeCheckBox.IsChecked = preset.ResearchMode;
             ResearchNoteButton.IsEnabled   = preset.ResearchMode;
             MenuResearchNote.IsEnabled     = preset.ResearchMode;
@@ -237,26 +254,30 @@ namespace gironWin
         {
             if (_debateService?.IsRunning == true) return;
 
-            // サービス初期化
             _approvalQueue   = new ApprovalQueue();
             _transferService = new TransferService(_adapterResolver, _turnRecords);
             _sessionRepository.StartNewSession();
-            _quoteService.Clear();   // セッション開始時に引用クリア
+            _quoteService.Clear();
             _debateService   = new AutoDebateService(
                 _transferService, _approvalQueue, _adapterResolver,
                 _logRepository, _sessionRepository);
 
-            // イベント接続
-            _debateService.StatusChanged     += DebateService_StatusChanged;
-            _debateService.TurnAdvanced      += DebateService_TurnAdvanced;
-            _debateService.DebateStopped     += DebateService_DebateStopped;
-            _debateService.ThirdSeatInputRequired += DebateService_ThirdSeatInputRequired;
-            _debateService.ResearchTagsExtracted  += DebateService_ResearchTagsExtracted;
+            // 通常イベント
+            _debateService.StatusChanged             += DebateService_StatusChanged;
+            _debateService.TurnAdvanced              += DebateService_TurnAdvanced;
+            _debateService.DebateStopped             += DebateService_DebateStopped;
+            _debateService.ThirdSeatInputRequired    += DebateService_ThirdSeatInputRequired;
+            _debateService.ResearchTagsExtracted     += DebateService_ResearchTagsExtracted;
 
-            // 承認キューのイベント接続
+            // ★ デバッグログを DebugLogWindow に转送
+            _debateService.DebugLogEmitted += (_, msg) => _debugLogWindow.AppendLog(msg);
+
             _approvalQueue.ApprovalRequested += ApprovalQueue_ApprovalRequested;
 
             _turnRecords.Clear();
+            // ★ デバッグウィンドウをクリアして開始を通知
+            _debugLogWindow.AppendLog($"[{DateTime.Now:HH:mm:ss.fff}] ===== 討論開始 ===== MaxTurns={MaxTurnsTextBox.Text}");
+
             var config = BuildConfig();
             _debateService.Start(config);
 
@@ -267,9 +288,7 @@ namespace gironWin
         }
 
         private void StopButton_Click(object sender, RoutedEventArgs e)
-        {
-            _debateService?.Stop();
-        }
+            => _debateService?.Stop();
 
         private void PauseResumeButton_Click(object sender, RoutedEventArgs e)
         {
@@ -317,7 +336,7 @@ namespace gironWin
                 DisplayName   = ThirdSeatNameTextBox.Text.Trim().NullIfEmpty() ?? "第3席",
                 IntervalTurns = interval,
                 Url           = ThirdSeatUrlTextBox.Text.Trim(),
-                WebView       = thirdMode == ThirdSeatMode.AiSite ? null : null // 将来: 第3席WebView
+                WebView       = null
             };
 
             _approvalPolicy = RequireApprovalCheckBox.IsChecked == true
@@ -326,7 +345,6 @@ namespace gironWin
 
             var policy = _currentPreset?.TurnPolicy ?? TurnPolicy.RoundRobin;
 
-            // プロンプト: プリセット優先 → PromptProfile にフォールバック
             string leftPrompt  = !string.IsNullOrWhiteSpace(_currentPreset?.LeftPrompt)
                 ? _currentPreset.LeftPrompt
                 : _promptProfile.LeftSystemPrompt;
@@ -368,8 +386,9 @@ namespace gironWin
         private void DebateService_StatusChanged(object? sender, string msg)
             => Dispatcher.Invoke(() => SetStatus(msg));
 
-        private void DebateService_TurnAdvanced(object? sender, int turn)
-            => Dispatcher.Invoke(() => TurnCountLabel.Text = $"Turn: {turn}");
+        /// <summary>TurnAdvanced は往復カウント(roundCount)を通知する</summary>
+        private void DebateService_TurnAdvanced(object? sender, int roundCount)
+            => Dispatcher.Invoke(() => TurnCountLabel.Text = $"往復: {roundCount}");
 
         private void DebateService_DebateStopped(object? sender, EventArgs e)
             => Dispatcher.Invoke(() =>
@@ -386,7 +405,7 @@ namespace gironWin
             => Dispatcher.Invoke(() =>
             {
                 var win = new ThirdSeatWindow(req) { Owner = this };
-                win.Show(); // モーダルレスで表示（入力後に自動コールバック）
+                win.Show();
             });
 
         private void DebateService_ResearchTagsExtracted(object? sender, System.Collections.Generic.List<ResearchTagEntry> tags)
@@ -406,10 +425,10 @@ namespace gironWin
         private void ApprovalQueue_ApprovalRequested(object? sender, ApprovalRequestedEventArgs e)
             => Dispatcher.Invoke(() =>
             {
-                ApprovalTitleLabel.Text    = "承認待ち";
+                ApprovalTitleLabel.Text     = "承認待ち";
                 ApprovalDirectionLabel.Text = e.Direction;
-                ApprovalTextBox.Text       = e.Text;
-                ApprovalPanel.Visibility   = Visibility.Visible;
+                ApprovalTextBox.Text        = e.Text;
+                ApprovalPanel.Visibility    = Visibility.Visible;
                 ApprovalTextBox.Focus();
             });
 
@@ -433,10 +452,7 @@ namespace gironWin
             if (TurnLogListBox.SelectedItem is TransferRecord rec)
             {
                 var win = new TextPreviewWindow(
-                    rec,
-                    _quoteService,
-                    rec.Direction,
-                    _sessionRepository)   // ★ sessionRepository を渡す
+                    rec, _quoteService, rec.Direction, _sessionRepository)
                 {
                     Owner = this,
                     Title = $"Turn {rec.TurnNumber} [{rec.Direction}]"
@@ -449,9 +465,7 @@ namespace gironWin
         // ウィンドウクローズ
         // ---------------------------------------------------------------
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
-        {
-            _debateService?.Stop();
-        }
+            => _debateService?.Stop();
 
         // ---------------------------------------------------------------
         // ヘルパー
