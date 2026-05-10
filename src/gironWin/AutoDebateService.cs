@@ -11,6 +11,7 @@ namespace gironWin
 
     /// <summary>
     /// Phase 3-5: 第3席・TurnPolicy・ResearchMode 対応 AutoDebateService
+    /// MaxTurns = 往復カウント（右が返答した時点で1往復）
     /// </summary>
     public sealed class AutoDebateService
     {
@@ -30,15 +31,16 @@ namespace gironWin
         public bool IsPaused  => _isPaused;
 
         public ResearchService ResearchService => _researchService;
-        public SummaryService      SummaryService  => _summaryService;
+        public SummaryService  SummaryService  => _summaryService;
 
         public event EventHandler<string>? StatusChanged;
+        /// <summary>往復カウント(roundCount)を通知する</summary>
         public event EventHandler<int>?    TurnAdvanced;
         public event EventHandler?         DebateStopped;
-        /// <summary>第3席への入力が必要なとき発火（Human モード）</summary>
         public event EventHandler<ThirdSeatInputRequest>? ThirdSeatInputRequired;
-        /// <summary>研究タグが抽出されたとき発火</summary>
         public event EventHandler<List<ResearchTagEntry>>? ResearchTagsExtracted;
+        /// <summary>デバッグログ出力先（DebugLogWindow が購読する）</summary>
+        public event EventHandler<string>? DebugLogEmitted;
 
         public AutoDebateService(
             TransferService transferService,
@@ -101,29 +103,29 @@ namespace gironWin
         private async Task RunLoopAsync(AutoDebateConfig config, CancellationToken ct)
         {
             NotifyStatus("自動討論を開始します。");
-            int turn = 0;
 
-            // CritiqueThenRefine: Proposer → Critic → Refiner (左→右→左)
-            // ResearchReviewLoop: Hypothesis → Proof → Counter → Review
+            // turn       = 送信総回数（左右・第3席 全部合計）
+            // roundCount = 往復カウント（右→左完了で +1、MaxTurns 判定に使用）
+            int turn       = 0;
+            int roundCount = 0;
+
             int phaseIndex = 0;
             DebateDirection direction = DebateDirection.LeftToRight;
 
             string leftSnapshot  = string.Empty;
             string rightSnapshot = string.Empty;
-            string thirdSnapshot = string.Empty;
 
-            // 各ターンの TransferRecord 一覧（司会サマリー用）
             var turnRecords = new List<TransferRecord>();
 
-            // ★ 追加: 連続失敗カウンター
             int consecutiveFailCount = 0;
             const int MaxConsecutiveFail = 3;
+
+            DebugLog($"[RunLoop] 開始 MaxTurns={config.MaxTurns} TurnPolicy={config.TurnPolicy}");
 
             try
             {
                 while (!ct.IsCancellationRequested)
                 {
-                    // 一時停止
                     if (_isPaused)
                     {
                         NotifyStatus("一時停止中… 再開ボタンを押してください。");
@@ -132,15 +134,16 @@ namespace gironWin
                     }
 
                     turn++;
-                    TurnAdvanced?.Invoke(this, turn);
 
-                    // ターンポリシーで方向を決定
+                    // 方向を決定
                     direction = ResolveDirection(config.TurnPolicy, direction, turn, phaseIndex);
+                    bool isLeftTurn = direction == DebateDirection.LeftToRight;
 
-                    // 第3席を挟むか判定
+                    // 第3席を挟むか判定（第3席は roundCount に影響しない）
                     bool isThirdTurn = ShouldInsertThirdSeat(config.ThirdSeat, turn);
                     if (isThirdTurn)
                     {
+                        DebugLog($"[Turn {turn}] 第3席ターン (roundCount={roundCount} 変化なし)");
                         bool ok = await RunThirdSeatTurnAsync(config, turnRecords, turn, ct);
                         if (!ok) break;
                         phaseIndex++;
@@ -148,8 +151,9 @@ namespace gironWin
                         continue;
                     }
 
+                    DebugLog($"[Turn {turn}] 開始 direction={direction} isLeftTurn={isLeftTurn} roundCount={roundCount} phaseIndex={phaseIndex}");
+
                     // 通常ターン
-                    bool isLeftTurn = direction == DebateDirection.LeftToRight;
                     var srcWebView  = isLeftTurn ? config.LeftWebView  : config.RightWebView;
                     var tgtWebView  = isLeftTurn ? config.RightWebView : config.LeftWebView;
                     string srcUrl   = isLeftTurn ? config.LeftUrl      : config.RightUrl;
@@ -182,6 +186,7 @@ namespace gironWin
                     if (string.IsNullOrWhiteSpace(generatedText) || generatedText == snapshot)
                     {
                         NotifyStatus($"ターン {turn}: 新規テキスト未検出。再試行します。");
+                        DebugLog($"[Turn {turn}] テキスト未検出 → turn-- consecutiveFail={consecutiveFailCount + 1}");
                         await Task.Delay(800, ct);
                         turn--;
                         consecutiveFailCount++;
@@ -193,12 +198,12 @@ namespace gironWin
                         continue;
                     }
 
-                    consecutiveFailCount = 0; // ★ 成功したらリセット
+                    consecutiveFailCount = 0;
 
                     if (isLeftTurn) leftSnapshot  = generatedText;
                     else            rightSnapshot = generatedText;
 
-                    // Phase 5: 研究モード タグ抽出
+                    // 研究モード タグ抽出
                     if (config.ResearchMode)
                     {
                         string msgId = $"msg-{turn}-{(isLeftTurn ? "L" : "R")}";
@@ -211,7 +216,6 @@ namespace gironWin
                         }
                     }
 
-                    // 1行要約
                     string summary = _summaryService.Summarize(generatedText);
                     NotifyStatus($"ターン {turn}: 生成完了 [{summary}]");
 
@@ -226,27 +230,24 @@ namespace gironWin
                         ? $"{prefix}{body}"
                         : $"{tgtPrompt}\n\n{prefix}{body}";
 
-                    // 承認待機（ApprovalPolicy による動的判定）
+                    // 承認判定
                     bool needsApproval = config.RequireApproval;
                     if (config.ApprovalPolicy != null)
                     {
-                        // 直前ターンに引用があったかを判定（新しい rec はまだ未生成）
                         bool hasQuote = turnRecords.Count > 0 &&
                                         (turnRecords[turnRecords.Count - 1].QuotedMessageIds?.Count ?? 0) > 0;
                         needsApproval = config.ApprovalPolicy.ShouldRequireApproval(
-                            generatedText,
-                            hasQuote:        hasQuote,
-                            isAfterRecovery: false);
+                            generatedText, hasQuote: hasQuote, isAfterRecovery: false);
                     }
 
                     if (needsApproval)
                     {
-                        NotifyStatus($"\u30bf\u30fc\u30f3 {turn}: \u627f\u8a8d\u5f85\u3061...");
+                        NotifyStatus($"ターン {turn}: 承認待ち...");
                         try
                         {
                             var result = await _approvalQueue.EnqueueAsync(
                                 srcAdapter.SiteName, tgtAdapter.SiteName, transferText, true, ct);
-                            if (!result.Approved) { NotifyStatus($"\u30bf\u30fc\u30f3 {turn}: \u5374\u4e0b\u3002\u505c\u6b62\u3057\u307e\u3059\u3002"); break; }
+                            if (!result.Approved) { NotifyStatus($"ターン {turn}: 却下。停止します。"); break; }
                             transferText = result.Text;
                         }
                         catch (OperationCanceledException) { break; }
@@ -259,8 +260,8 @@ namespace gironWin
 
                     if (!transferResult.Success)
                     {
-                        // ★ break → リトライに変更（連続失敗のみ停止）
                         NotifyStatus($"ターン {turn}: 送信失敗 → {transferResult.Message}  (2秒後リトライ)");
+                        DebugLog($"[Turn {turn}] 送信失敗 → turn-- consecutiveFail={consecutiveFailCount + 1}");
                         await Task.Delay(2000, ct);
                         turn--;
                         consecutiveFailCount++;
@@ -272,13 +273,12 @@ namespace gironWin
                         continue;
                     }
 
-                    consecutiveFailCount = 0; // ★ 送信成功でリセット
+                    consecutiveFailCount = 0;
 
-                    // TransferRecord を司会サマリー用リストに追加
                     var rec = new TransferRecord
                     {
                         TurnNumber = turn,
-                        Direction  = $"{srcAdapter.SiteName}\u2192{tgtAdapter.SiteName}",
+                        Direction  = $"{srcAdapter.SiteName}→{tgtAdapter.SiteName}",
                         Text       = generatedText,
                         Summary    = summary,
                         MessageId  = $"msg-{turn}-{(isLeftTurn ? "L" : "R")}"
@@ -286,9 +286,28 @@ namespace gironWin
                     turnRecords.Add(rec);
                     await _sessionRepository.AppendAsync(rec);
 
+                    // ★ 往復カウント: 右→左（右席の返答）完了時に +1
+                    if (!isLeftTurn)
+                    {
+                        roundCount++;
+                        TurnAdvanced?.Invoke(this, roundCount); // UI に往復数を通知
+                        DebugLog($"[Turn {turn}] 右→左 完了 → roundCount={roundCount} / MaxTurns={config.MaxTurns}");
+
+                        if (config.MaxTurns > 0 && roundCount >= config.MaxTurns)
+                        {
+                            NotifyStatus($"設定往復数 {config.MaxTurns} 往復に到達。討論終了。");
+                            DebugLog($"[RunLoop] MaxTurns 到達: roundCount={roundCount} >= MaxTurns={config.MaxTurns} → 終了");
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        DebugLog($"[Turn {turn}] 左→右 完了 (roundCount={roundCount} まだカウントしない)");
+                    }
+
                     NotifyStatus($"ターン {turn}: 送信完了。");
 
-                    // ポリシーフェーズ進行
+                    // フェーズ進行
                     phaseIndex = AdvancePhaseIndex(config.TurnPolicy, phaseIndex);
 
                     // 方向反転（RoundRobin）
@@ -297,18 +316,13 @@ namespace gironWin
                             ? DebateDirection.RightToLeft
                             : DebateDirection.LeftToRight;
 
-                    if (config.MaxTurns > 0 && turn >= config.MaxTurns)
-                    {
-                        NotifyStatus($"最大ターン数 {config.MaxTurns} に到達。討論終了。");
-                        break;
-                    }
-
-                    NotifyStatus($"\u30bf\u30fc\u30f3 {turn}: \u6b21\u306e\u30bf\u30fc\u30f3\u307e\u3067 {config.PostSendWaitMs / 1000} \u79d2\u5f85\u6a5f...");
+                    NotifyStatus($"次のターンまで {config.PostSendWaitMs / 1000} 秒待機...");
                     await Task.Delay(config.PostSendWaitMs, ct);
                 }
             }
             finally
             {
+                DebugLog($"[RunLoop] 終了 turn={turn} roundCount={roundCount} MaxTurns={config.MaxTurns}");
                 _cts      = null;
                 _isPaused = false;
                 _pauseTcs = null;
@@ -336,7 +350,6 @@ namespace gironWin
 
             if (third.Mode == ThirdSeatMode.Human)
             {
-                // Human モード: UI に入力を求める
                 string summary = _summaryService.BuildModeratorSummary(records);
                 var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
                 ThirdSeatInputRequired?.Invoke(this, new ThirdSeatInputRequest
@@ -349,11 +362,10 @@ namespace gironWin
                 try { thirdText = await tcs.Task.WaitAsync(ct); }
                 catch (OperationCanceledException) { return false; }
 
-                if (string.IsNullOrWhiteSpace(thirdText)) return true; // スキップ
+                if (string.IsNullOrWhiteSpace(thirdText)) return true;
             }
             else if (third.Mode == ThirdSeatMode.AiSite && third.WebView != null)
             {
-                // AI サイトモード: 司会サマリーを AI に投げる
                 string summary = _summaryService.BuildModeratorSummary(records);
                 var thirdAdapter = _adapterResolver.Resolve(third.Url);
                 if (thirdAdapter == null) return true;
@@ -392,12 +404,10 @@ namespace gironWin
         {
             return policy switch
             {
-                TurnPolicy.RoundRobin => current, // RunLoop 側で反転
+                TurnPolicy.RoundRobin => current,
                 TurnPolicy.CritiqueThenRefine =>
-                    // Phase 0=Proposer(Left), 1=Critic(Right), 2=Refiner(Left)
                     phase % 3 == 1 ? DebateDirection.RightToLeft : DebateDirection.LeftToRight,
                 TurnPolicy.ResearchReviewLoop =>
-                    // Phase 0=Hypothesis(Left), 1=Proof(Left), 2=Counter(Right), 3=Review(Right)
                     phase % 4 >= 2 ? DebateDirection.RightToLeft : DebateDirection.LeftToRight,
                 _ => current
             };
@@ -413,26 +423,9 @@ namespace gironWin
         private static string GetRoleLabel(TurnPolicy policy, int phase, bool isLeft)
         {
             if (policy == TurnPolicy.CritiqueThenRefine)
-            {
-                return (phase % 3) switch
-                {
-                    0 => " \u63d0\u6848",
-                    1 => " \u6279\u5224",
-                    2 => " \u6539\u5584",
-                    _ => ""
-                };
-            }
+                return (phase % 3) switch { 0 => " 提案", 1 => " 批判", 2 => " 改善", _ => "" };
             if (policy == TurnPolicy.ResearchReviewLoop)
-            {
-                return (phase % 4) switch
-                {
-                    0 => " \u4eee\u8aac",
-                    1 => " \u8a3c\u660e\u6848",
-                    2 => " \u53cd\u4f8b",
-                    3 => " \u67fb\u8aad",
-                    _ => ""
-                };
-            }
+                return (phase % 4) switch { 0 => " 仮説", 1 => " 証明案", 2 => " 反例", 3 => " 査読", _ => "" };
             return string.Empty;
         }
 
@@ -444,6 +437,9 @@ namespace gironWin
         }
 
         private void NotifyStatus(string msg) => StatusChanged?.Invoke(this, msg);
-    }
 
+        /// <summary>デバッグログをイベントで発火する</summary>
+        private void DebugLog(string msg)
+            => DebugLogEmitted?.Invoke(this, $"[{DateTime.Now:HH:mm:ss.fff}] {msg}");
+    }
 }

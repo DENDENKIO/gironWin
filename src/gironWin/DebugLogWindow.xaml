@@ -1,0 +1,107 @@
+<Window x:Class="gironWin.DebugLogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="⚙ デバッグログ" Height="520" Width="760"
+        WindowStartupLocation="Manual" Topmost="False"
+        Closing="Window_Closing">
+
+    <Window.Resources>
+        <Style TargetType="Button" x:Key="SmallBtn">
+            <Setter Property="Padding" Value="8,3"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- ヘッダー説明 -->
+        <TextBlock Grid.Row="0" Text="討論カウント・送信状況などのデバッグログをリアルタイムで確認できます。"
+                   FontSize="11" Foreground="#555" Margin="0,0,0,6"/>
+
+        <!-- フィルター行 -->
+        <Grid Grid.Row="1" Margin="0,0,0,6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Text="キーワードフィルター:" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
+            <TextBox Grid.Column="1" x:Name="FilterTextBox" VerticalContentAlignment="Center"
+                     FontSize="12" Margin="0,0,6,0"
+                     ToolTip="入力するとリアルタイムでフィルタリングされます"
+                     TextChanged="FilterTextBox_TextChanged"/>
+
+            <CheckBox Grid.Column="2" x:Name="AutoScrollCheckBox" Content="自動スクロール"
+                      IsChecked="True" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12"/>
+
+            <Button Grid.Column="3" x:Name="ClearButton" Content="🗑 クリア"
+                    Style="{StaticResource SmallBtn}" Margin="0,0,4,0"
+                    Click="ClearButton_Click"/>
+
+            <Button Grid.Column="4" x:Name="CopyButton" Content="📋 全コピー"
+                    Style="{StaticResource SmallBtn}"
+                    Click="CopyButton_Click"/>
+        </Grid>
+
+        <!-- ログ表示エリア -->
+        <Border Grid.Row="2" BorderBrush="#999" BorderThickness="1">
+            <ListBox x:Name="LogListBox"
+                     FontFamily="Consolas,Courier New,monospace"
+                     FontSize="11"
+                     Background="#1E1E1E"
+                     Foreground="#D4D4D4"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     VirtualizingPanel.IsVirtualizing="True"
+                     VirtualizingPanel.VirtualizationMode="Recycling">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="4,1"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Style.Triggers>
+                            <!-- roundCount ログは緑色 -->
+                            <DataTrigger Binding="{Binding IsRound}" Value="True">
+                                <Setter Property="Foreground" Value="#4EC9B0"/>
+                            </DataTrigger>
+                            <!-- エラー系は赤 -->
+                            <DataTrigger Binding="{Binding IsError}" Value="True">
+                                <Setter Property="Foreground" Value="#F44747"/>
+                            </DataTrigger>
+                            <!-- 終了ログは黄 -->
+                            <DataTrigger Binding="{Binding IsEnd}" Value="True">
+                                <Setter Property="Foreground" Value="#DCDCAA"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding Message}" TextWrapping="NoWrap"/>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <!-- フッター: カウンター表示 -->
+        <Border Grid.Row="3" Background="#2D2D2D" Padding="6,4" Margin="0,4,0,0">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock x:Name="TotalLinesLabel" Text="ログ: 0 行"
+                           Foreground="#9CDCFE" FontFamily="Consolas" FontSize="11" Margin="0,0,16,0"/>
+                <TextBlock x:Name="RoundCountLabel" Text="往復: 0"
+                           Foreground="#4EC9B0" FontFamily="Consolas" FontSize="11" Margin="0,0,16,0"/>
+                <TextBlock x:Name="TurnCountLabel" Text="総送信: 0"
+                           Foreground="#CE9178" FontFamily="Consolas" FontSize="11"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>
