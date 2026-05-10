@@ -97,6 +97,8 @@ namespace gironWin
         document.execCommand('delete', false, null);
     }} catch(e) {{}}
 
+    if (!text) return 'clear-ok';
+
     try {{
         const dt = new DataTransfer();
         dt.setData('text/plain', text);
@@ -105,7 +107,6 @@ namespace gironWin
         }}));
         const cur = (el.innerText || el.textContent || '').trim();
         if (cur.length >= Math.min(text.length, 5)) {{
-            el.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: text }}));
             return 'paste-ok:' + cur.length;
         }}
     }} catch(e) {{}}
@@ -116,7 +117,6 @@ namespace gironWin
         document.execCommand('selectAll', false, null);
         const r = document.execCommand('insertText', false, text);
         if (r) {{
-            el.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: text }}));
             return 'execCmd-ok';
         }}
     }} catch(e) {{}}
@@ -320,14 +320,42 @@ namespace gironWin
         {
             string script = @"
 (() => {
+    // ① Stop ボタン
     const stopBtn = document.querySelector(
-        'button[aria-label*=""Stop"" i],button[aria-label*=""停止""],button[aria-label*=""生成を停止""]'
+        'button[aria-label*=""Stop"" i], button[aria-label*=""停止""], button[aria-label*=""生成を停止""]'
     );
     if (stopBtn) return true;
-    const loading = document.querySelector(
-        '.loading-container,.response-loading,thinking-block,[data-loading=""true""]'
-    );
-    if (loading) return true;
+
+    // ② 送信ボタンが disabled かどうか（生成中は disabled になる）
+    const sendSelectors = [
+        'button[aria-label=""Send message""]',
+        'button[aria-label=""送信""]',
+        'button[aria-label*=""send"" i]',
+        'button[data-test-id=""send-button""]'
+    ];
+    for (const sel of sendSelectors) {
+        const btn = document.querySelector(sel);
+        if (btn) {
+            if (btn.disabled || btn.getAttribute('aria-disabled') === 'true')
+                return true;
+            // 有効な送信ボタンが見つかった → 生成完了
+            return false;
+        }
+    }
+
+    // ③ mat-icon が 'stop' になっているボタン（Gemini生成中）
+    for (const icon of document.querySelectorAll('mat-icon, .mat-icon')) {
+        const txt = (icon.textContent || '').trim().toLowerCase();
+        if (txt === 'stop' || txt === 'stop_circle') {
+            const btn = icon.closest('button');
+            if (btn && !btn.disabled) return true;
+        }
+    }
+
+    // ④ ローディング系
+    if (document.querySelector('.loading-container, .response-loading, thinking-block, [data-loading=""true""]'))
+        return true;
+
     return false;
 })();";
             return await ExecScriptBoolAsync(webView, script);

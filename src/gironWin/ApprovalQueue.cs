@@ -54,6 +54,8 @@ namespace gironWin
             // UI へ通知
             ApprovalRequested?.Invoke(this, new ApprovalRequestedEventArgs
             {
+                Source    = item.SourceSite,
+                Target    = item.TargetSite,
                 Direction = item.Direction,
                 Text      = item.Text,
                 Item      = item
@@ -114,6 +116,10 @@ namespace gironWin
     /// </summary>
     public sealed class ApprovalRequestedEventArgs : EventArgs
     {
+        /// <summary>送信元 (例: "Perplexity")</summary>
+        public string       Source    { get; init; } = string.Empty;
+        /// <summary>送信先 (例: "Gemini")</summary>
+        public string       Target    { get; init; } = string.Empty;
         /// <summary>送信方向 (例: "Perplexity → Gemini")</summary>
         public string       Direction { get; init; } = string.Empty;
         /// <summary>承認対象テキスト</summary>

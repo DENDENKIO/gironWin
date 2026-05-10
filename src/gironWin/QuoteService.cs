@@ -113,6 +113,11 @@ namespace gironWin
 
         public void Clear() => References.Clear();
 
+        private readonly List<PartialQuote> _partialQuotes = new();
+        public IReadOnlyList<PartialQuote> PartialQuotes => _partialQuotes;
+        public void AddPartialQuote(PartialQuote q) => _partialQuotes.Add(q);
+        public void ClearPartialQuotes() => _partialQuotes.Clear();
+
         // ---------------------------------------------------------------
         private static string Indent(string text)
         {
@@ -120,4 +125,5 @@ namespace gironWin
             return "> " + string.Join("\n> ", text.Split('\n'));
         }
     }
+
 }

@@ -1,0 +1,219 @@
+<Window x:Class="gironWin.LogReader.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="生成文章ログリーダー"
+        Width="1200" Height="780"
+        mc:Ignorable="d"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="280"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ヘッダー: DockPanel で左右分割 -->
+        <DockPanel Grid.Row="0" Grid.ColumnSpan="2"
+                   LastChildFill="False"
+                   Margin="0,0,0,10">
+
+
+            <!-- ★追加: エクスポートボタン -->
+            <Button DockPanel.Dock="Right"
+                    Content="📤 エクスポート"
+                    Width="110"
+                    Margin="8,0,0,0"
+                    VerticalAlignment="Center"
+                    Click="ExportButton_Click"/>
+
+            <!-- 右端: チェックボックス群（DockPanel.Dock="Right" を先に書く） -->
+            <CheckBox x:Name="DebugToggle"
+                      DockPanel.Dock="Right"
+                      Content="🔍 デバッグ"
+                      IsChecked="False"
+                      VerticalAlignment="Center"
+                      Margin="16,0,0,0"
+                      Checked="DebugToggle_Changed"
+                      Unchecked="DebugToggle_Changed"/>
+            <CheckBox x:Name="MathToggle"
+                      DockPanel.Dock="Right"
+                      Content="📐 数式ON"
+                      IsChecked="True"
+                      VerticalAlignment="Center"
+                      Margin="0,0,0,0"
+                      Checked="MathToggle_Changed"
+                      Unchecked="MathToggle_Changed"/>
+
+            <!-- 左側: ナビゲーション -->
+            <Button x:Name="PrevButton" Content="← 前へ"
+                    Width="80" Margin="0,0,4,0" Click="PrevButton_Click"/>
+            <TextBlock x:Name="PageInfoLabel"
+                       VerticalAlignment="Center" Foreground="Gray" Margin="0,0,8,0"/>
+            <Button x:Name="NextButton" Content="次へ →"
+                    Width="80" Margin="0,0,12,0" Click="NextButton_Click"/>
+            <TextBlock x:Name="HeaderTurnLabel"
+                       FontWeight="Bold" FontSize="17"
+                       VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBlock x:Name="HeaderDirectionLabel"
+                       VerticalAlignment="Center" Foreground="Gray" Margin="0,0,8,0"/>
+            <TextBlock x:Name="HeaderTimestampLabel"
+                       VerticalAlignment="Center"
+                       FontSize="11" Foreground="Gray" Margin="0,0,16,0"/>
+        </DockPanel>
+
+        <!-- メインエリア: タブ切替 -->
+        <TabControl Grid.Row="1" Grid.Column="0"
+                    x:Name="MainTabControl">
+
+            <!-- タブ① レンダリング表示 -->
+            <TabItem Header="📄 表示">
+                <Border BorderThickness="1" BorderBrush="LightGray" CornerRadius="4">
+                    <Grid>
+                        <wv2:WebView2 x:Name="BodyWebView"/>
+                    </Grid>
+                </Border>
+            </TabItem>
+
+            <!-- タブ② RAWテキスト -->
+            <TabItem Header="📝 RAWテキスト" x:Name="RawTab">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="4">
+                        <TextBlock Text="AI応答（抽出テキスト）:" FontWeight="Bold"
+                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock x:Name="RawLengthLabel"
+                                   Foreground="Gray" FontSize="11"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <ScrollViewer Grid.Row="1">
+                        <TextBox x:Name="RawTextBox"
+                                 IsReadOnly="True"
+                                 FontFamily="Consolas" FontSize="13"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 Background="#f9f9f9" Foreground="#1a1a1a"
+                                 BorderThickness="0" Padding="12"/>
+                    </ScrollViewer>
+                </Grid>
+            </TabItem>
+
+            <!-- タブ③ AIサイトHTML -->
+            <TabItem Header="🌐 AIサイトHTML" x:Name="AiHtmlTab">
+                <Grid>
+                    <wv2:WebView2 x:Name="AiHtmlWebView"/>
+                    <TextBlock x:Name="NoAiHtmlLabel"
+                               Text="HTMLスナップショットなし"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Foreground="#888"
+                               Visibility="Collapsed"/>
+                </Grid>
+            </TabItem>
+
+            <!-- ★追加: タブ④ 画像一覧 -->
+            <TabItem Header="🖼 画像一覧" x:Name="ImageListTab">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="4">
+                        <TextBlock x:Name="ImageCountLabel"
+                                   FontWeight="Bold" FontSize="13"
+                                   VerticalAlignment="Center" Margin="0,0,8,0"
+                                   Text="画像なし"/>
+                    </StackPanel>
+                    <wv2:WebView2 x:Name="ImageListWebView" Grid.Row="1"/>
+                    <TextBlock x:Name="NoImageLabel"
+                               Grid.Row="1"
+                               Text="画像がありません"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Foreground="#888"
+                               Visibility="Collapsed"/>
+                </Grid>
+            </TabItem>
+
+            <!-- タブ⑤ 送信プロンプト -->
+            <TabItem Header="📤 送信プロンプト" x:Name="PromptTab">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="4">
+                        <TextBlock Text="AIへ送信したテキスト:" FontWeight="Bold"
+                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    </StackPanel>
+                    <ScrollViewer Grid.Row="1">
+                        <TextBox x:Name="PromptTextBox"
+                                 IsReadOnly="True"
+                                 FontFamily="Segoe UI, Yu Gothic UI" FontSize="13"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 Background="#fff8f0" Foreground="#1a1a1a"
+                                 BorderThickness="0" Padding="12"/>
+                    </ScrollViewer>
+                </Grid>
+            </TabItem>
+
+        </TabControl>
+
+        <!-- 右パネル -->
+        <Border Grid.Row="1" Grid.Column="1"
+                Margin="10,0,0,0" Padding="10"
+                BorderThickness="1" BorderBrush="LightGray"
+                CornerRadius="4">
+            <StackPanel>
+                <TextBlock Text="部分引用" FontWeight="Bold" FontSize="13" Margin="0,0,0,8"/>
+                <TextBlock FontSize="11" Foreground="Gray" Margin="0,0,0,8"
+                           Text="① 本文をマウスで選択&#x0a;② ボタンで取得"/>
+                <Button Content="選択テキストを取得"
+                        HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                        Click="GetSelectionButton_Click"/>
+                <Border BorderThickness="1" BorderBrush="#EEE"
+                        MinHeight="70" MaxHeight="120" Padding="6"
+                        CornerRadius="4" Margin="0,0,0,8">
+                    <ScrollViewer>
+                        <TextBlock x:Name="SelectedTextBlock"
+                                   Text="（テキストを選択してください）"
+                                   TextWrapping="Wrap"
+                                   Foreground="Gray" FontSize="12"/>
+                    </ScrollViewer>
+                </Border>
+                <TextBlock Text="送信先:" FontSize="11" Foreground="Gray" Margin="0,0,0,4"/>
+                <ComboBox x:Name="QuoteTargetCombo"
+                          HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                          SelectedIndex="0">
+                    <ComboBoxItem Content="左席への引用"  Tag="Left"/>
+                    <ComboBoxItem Content="右席への引用"  Tag="Right"/>
+                    <ComboBoxItem Content="クリップボード" Tag="Clipboard"/>
+                </ComboBox>
+                <Button x:Name="QuoteRegisterButton"
+                        Content="引用を登録"
+                        IsEnabled="False"
+                        HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                        Click="QuoteRegisterButton_Click"/>
+                <TextBlock x:Name="QuoteStatusLabel"
+                           TextWrapping="Wrap"
+                           FontSize="11" Foreground="Green" Margin="0,0,0,8"/>
+                <Separator Margin="0,4"/>
+                <Button Content="📋 全文コピー"
+                        HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                        Click="CopyButton_Click"/>
+                <Button Content="閉じる"
+                        HorizontalAlignment="Stretch"
+                        Click="CloseButton_Click"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

@@ -1,0 +1,64 @@
+﻿<Window x:Class="gironWin.LogExportOptionsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ログエクスポート設定"
+        Height="320"
+        Width="420"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="AIサイトHTMLタブのエクスポート設定"
+                   FontSize="16"
+                   FontWeight="Bold"
+                   Margin="0,0,0,12"/>
+
+        <StackPanel Grid.Row="1" Margin="0,0,0,12">
+            <TextBlock Text="出力形式" Margin="0,0,0,6"/>
+            <ComboBox x:Name="FormatComboBox" SelectedIndex="1">
+                <ComboBoxItem Content="HTML"/>
+                <ComboBoxItem Content="Markdown"/>
+                <ComboBoxItem Content="Text"/>
+            </ComboBox>
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Margin="0,0,0,12">
+            <TextBlock Text="出力方法" Margin="0,0,0,6"/>
+            <ComboBox x:Name="ModeComboBox" SelectedIndex="0">
+                <ComboBoxItem Content="連結して1ファイル"/>
+                <ComboBoxItem Content="ターンごとに個別ファイル"/>
+            </ComboBox>
+        </StackPanel>
+
+        <StackPanel Grid.Row="3">
+            <CheckBox x:Name="IncludeMetadataCheckBox"
+                      IsChecked="True"
+                      Content="ターン番号・日時・要約などのメタ情報を含める"
+                      Margin="0,0,0,8"/>
+            <CheckBox x:Name="PreferHtmlSnapshotCheckBox"
+                      IsChecked="True"
+                      Content="HTMLタブの保存済みHTMLを優先して使う"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="4"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,16,0,0">
+            <Button Content="キャンセル"
+                    Width="90"
+                    Margin="0,0,8,0"
+                    IsCancel="True"/>
+            <Button Content="エクスポート"
+                    Width="90"
+                    IsDefault="True"
+                    Click="Export_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

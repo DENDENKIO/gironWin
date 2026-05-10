@@ -1,0 +1,55 @@
+<Window x:Class="gironWin.HumanPriorityWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="人間割り込み入力" Height="380" Width="560"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- タイトル + タイマー -->
+        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,8">
+            <TextBlock Text="🙋 人間割り込み" FontWeight="Bold" FontSize="14"
+                       DockPanel.Dock="Left" VerticalAlignment="Center"/>
+            <TextBlock x:Name="TimerLabel" DockPanel.Dock="Right"
+                       FontSize="13" Foreground="#E53935" VerticalAlignment="Center"/>
+        </DockPanel>
+
+        <!-- 直近サマリー -->
+        <GroupBox Grid.Row="1" Header="直近の討論サマリー" Margin="0,0,0,8">
+            <TextBox x:Name="SummaryBox" IsReadOnly="True" TextWrapping="Wrap"
+                     MaxHeight="80" VerticalScrollBarVisibility="Auto"
+                     Background="#F5F5F5" Padding="4"
+                     Text="（サマリーなし）"/>
+        </GroupBox>
+
+        <!-- 入力欄 -->
+        <TextBox x:Name="InputBox" Grid.Row="2"
+                 TextWrapping="Wrap" AcceptsReturn="True"
+                 VerticalScrollBarVisibility="Auto"
+                 Padding="6" FontSize="13"
+                 ToolTip="ここに発言を入力してください。空のままスキップするとAIターンが継続します。"/>
+
+        <!-- プログレスバー -->
+        <ProgressBar x:Name="TimerBar" Grid.Row="3"
+                     Height="6" Margin="0,8,0,8"
+                     Minimum="0" Maximum="100" Value="100"
+                     Foreground="#1976D2"/>
+
+        <!-- ボタン -->
+        <StackPanel Grid.Row="4" Orientation="Horizontal"
+                    HorizontalAlignment="Right">
+            <Button Content="スキップ（AIターンへ）" Width="160"
+                    Click="SkipButton_Click" Padding="6,4" Margin="0,0,8,0"/>
+            <Button Content="✔ 送信" Width="100" IsDefault="True"
+                    Click="SendButton_Click" Padding="6,4"
+                    Background="#1976D2" Foreground="White"/>
+        </StackPanel>
+    </Grid>
+</Window>

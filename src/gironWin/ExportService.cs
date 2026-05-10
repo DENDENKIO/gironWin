@@ -1,247 +1,471 @@
+using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Text;
-using System.Text.Json;
-using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 
 namespace gironWin
 {
-    /// <summary>
-    /// FR-14: 議論終了後の成果物生成。
-    /// 合意点・対立点・引用根拠・次アクション・仕様案・研究ノートを出力する。
-    /// Markdown / JSON / txt の3形式に対応。
-    /// </summary>
+    public enum LogExportFormat
+    {
+        Html,
+        Markdown,
+        Text
+    }
+
+    public enum LogExportMode
+    {
+        Combined,
+        Separate
+    }
+
+    public sealed class LogExportOptions
+    {
+        public LogExportFormat Format { get; set; } = LogExportFormat.Markdown;
+        public LogExportMode Mode { get; set; } = LogExportMode.Combined;
+        public bool IncludeMetadata { get; set; } = true;
+        public bool PreferHtmlSnapshot { get; set; } = true;
+        public string BaseFileName { get; set; } = $"giron-export-{DateTime.Now:yyyyMMdd-HHmmss}";
+    }
+
+    public sealed class LogExportResult
+    {
+        public bool Success { get; init; }
+        public string Message { get; init; } = string.Empty;
+        public List<string> OutputPaths { get; init; } = new();
+    }
+
     public sealed class ExportService
     {
-        public string ExportFolder { get; } =
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "gironWin", "exports");
-
-        // ---------------------------------------------------------------
-        // Markdown エクスポート（メイン成果物）
-        // ---------------------------------------------------------------
-
-        public async Task<string> ExportMarkdownAsync(
-            IReadOnlyList<TransferRecord>   records,
-            IReadOnlyList<QuoteReference>   quotes,
-            IReadOnlyList<ResearchTagEntry> researchTags,
-            DebatePreset?  preset = null,
-            string?        topic  = null)
+        public LogExportResult ExportAiSiteHtmlTabLogs(IReadOnlyList<TransferRecord> records, LogExportOptions options)
         {
-            Directory.CreateDirectory(ExportFolder);
-            string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string path  = Path.Combine(ExportFolder, $"debate_result_{stamp}.md");
+            if (records == null || records.Count == 0)
+            {
+                return new LogExportResult
+                {
+                    Success = false,
+                    Message = "No logs to export."
+                };
+            }
 
+            var ordered = records
+                .OrderBy(x => x.TurnNumber)
+                .ThenBy(x => x.Timestamp)
+                .ToList();
+
+            return options.Mode switch
+            {
+                LogExportMode.Combined => ExportCombined(ordered, options),
+                LogExportMode.Separate => ExportSeparate(ordered, options),
+                _ => new LogExportResult { Success = false, Message = "Unknown output mode." }
+            };
+        }
+
+        private LogExportResult ExportCombined(List<TransferRecord> records, LogExportOptions options)
+        {
+            var dialog = new SaveFileDialog
+            {
+                FileName = options.BaseFileName,
+                DefaultExt = GetExtension(options.Format),
+                Filter = GetSaveFilter(options.Format),
+                AddExtension = true,
+                OverwritePrompt = true,
+                Title = "Select combined export destination"
+            };
+
+            if (dialog.ShowDialog() != true)
+            {
+                return new LogExportResult { Success = false, Message = "Save cancelled." };
+            }
+
+            string content = options.Format switch
+            {
+                LogExportFormat.Html => BuildCombinedHtml(records, options),
+                LogExportFormat.Markdown => BuildCombinedMarkdown(records, options),
+                LogExportFormat.Text => BuildCombinedText(records, options),
+                _ => throw new NotSupportedException()
+            };
+
+            File.WriteAllText(dialog.FileName, content, new UTF8Encoding(true));
+
+            return new LogExportResult
+            {
+                Success = true,
+                Message = "Combined export completed.",
+                OutputPaths = new List<string> { dialog.FileName }
+            };
+        }
+
+        private LogExportResult ExportSeparate(List<TransferRecord> records, LogExportOptions options)
+        {
+            var dialog = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "Select output folder for separate files"
+            };
+
+            if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.FolderName))
+            {
+                return new LogExportResult { Success = false, Message = "Folder selection cancelled." };
+            }
+
+            string root = Path.Combine(dialog.FolderName, options.BaseFileName);
+            Directory.CreateDirectory(root);
+
+            var outputPaths = new List<string>();
+
+            foreach (var record in records)
+            {
+                string ext = GetExtension(options.Format);
+                string fileName = BuildPerTurnFileName(record, ext);
+                string fullPath = Path.Combine(root, fileName);
+
+                string content = options.Format switch
+                {
+                    LogExportFormat.Html => BuildPerTurnHtml(record, options),
+                    LogExportFormat.Markdown => BuildPerTurnMarkdown(record, options),
+                    LogExportFormat.Text => BuildPerTurnText(record, options),
+                    _ => throw new NotSupportedException()
+                };
+
+                File.WriteAllText(fullPath, content, new UTF8Encoding(true));
+                outputPaths.Add(fullPath);
+            }
+
+            return new LogExportResult
+            {
+                Success = true,
+                Message = "Separate export completed.",
+                OutputPaths = outputPaths
+            };
+        }
+
+        private static string BuildCombinedHtml(List<TransferRecord> records, LogExportOptions options)
+        {
             var sb = new StringBuilder();
 
-            // ヘッダ
-            sb.AppendLine("# AI\u8a0e\u8ad6\u30ef\u30fc\u30af\u30d9\u30f3\u30c1 \u2014 \u6210\u679c\u7269\u30ec\u30dd\u30fc\u30c8");
-            sb.AppendLine();
-            sb.AppendLine($"> \u751f\u6210\u65e5\u6642: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            if (!string.IsNullOrWhiteSpace(topic))
-                sb.AppendLine($"> \u8b70\u984c: {topic}");
-            if (preset != null)
-            {
-                sb.AppendLine($"> \u30d7\u30ea\u30bb\u30c3\u30c8: {preset.Name}");
-                sb.AppendLine($"> TurnPolicy: {preset.TurnPolicy}");
-                if (preset.ResearchMode)
-                    sb.AppendLine("> \u30e2\u30fc\u30c9: \ud83d\udd2c \u6570\u5b66\u7814\u7a76\u30e2\u30fc\u30c9");
-            }
-            sb.AppendLine();
-            sb.AppendLine("---");
-            sb.AppendLine();
+            sb.AppendLine("<!doctype html>");
+            sb.AppendLine("<html lang='ja'>");
+            sb.AppendLine("<head>");
+            sb.AppendLine("<meta charset='utf-8'>");
+            sb.AppendLine("<meta name='viewport' content='width=device-width, initial-scale=1'>");
+            sb.AppendLine("<title>AI Site HTML Export</title>");
+            sb.AppendLine("<style>");
+            sb.AppendLine("body{font-family:'Segoe UI',sans-serif;line-height:1.65;margin:24px;background:#f7f7f7;color:#222;}");
+            sb.AppendLine("h1{margin-bottom:24px;}");
+            sb.AppendLine("section{background:#fff;border:1px solid #ddd;border-radius:12px;padding:20px;margin-bottom:24px;}");
+            sb.AppendLine(".meta{font-size:13px;color:#666;margin-bottom:16px;white-space:pre-wrap;}");
+            sb.AppendLine(".missing{color:#b00020;font-weight:600;}");
+            sb.AppendLine(".html-wrap{border:1px solid #ccc;border-radius:8px;padding:16px;background:#fff;overflow:auto;}");
+            sb.AppendLine("</style>");
+            sb.AppendLine("</head>");
+            sb.AppendLine("<body>");
+            sb.AppendLine("<h1>AI Site HTML Export (All Turns)</h1>");
 
-            // 合意点・対立点
-            AppendAgreements(sb, records);
-
-            // 引用根拠
-            if (quotes.Count > 0)
-            {
-                sb.AppendLine("## \u5f15\u7528\u6839\u62e0");
-                sb.AppendLine();
-                foreach (var q in quotes)
-                {
-                    string typeLabel = q.QuoteType == "Full" ? "\u5168\u6587" : "\u90e8\u5206";
-                    sb.AppendLine(
-                        $"- **Turn {q.SourceTurnNumber}** " +
-                        $"[{q.SourceParticipantId} / {typeLabel}\u5f15\u7528]");
-                    sb.AppendLine($"  > {q.QuotedText.Replace("\n", "\n  > ")}");
-                }
-                sb.AppendLine();
-            }
-
-            // 研究ノート
-            if (researchTags.Count > 0)
-            {
-                sb.AppendLine("## \u7814\u7a76\u30ce\u30fc\u30c8");
-                sb.AppendLine();
-                foreach (var grp in researchTags.GroupBy(t => t.TagType))
-                {
-                    sb.AppendLine($"### {grp.Key}");
-                    foreach (var t in grp)
-                        sb.AppendLine($"- Turn {t.TurnNumber}: {t.Content}");
-                    sb.AppendLine();
-                }
-            }
-
-            // 発言ログ全文
-            sb.AppendLine("## \u767a\u8a00\u30ed\u30b0");
-            sb.AppendLine();
             foreach (var r in records)
             {
-                sb.AppendLine($"### Turn {r.TurnNumber} \u2014 {r.Direction}");
-                sb.AppendLine($"_{r.TimestampText}_");
+                sb.AppendLine("<section>");
+                sb.AppendLine($"<h2>Turn {r.TurnNumber}: {HtmlEncode(r.SourceSite)} -> {HtmlEncode(r.TargetSite)}</h2>");
+
+                if (options.IncludeMetadata)
+                {
+                    sb.AppendLine("<div class='meta'>");
+                    string ts = r.Timestamp.ToString("yyyy-MM-dd HH:mm:ss");
+                    sb.AppendLine($"Timestamp: {HtmlEncode(ts)}<br>");
+                    sb.AppendLine($"Direction: {HtmlEncode(r.Direction ?? string.Empty)}<br>");
+                    sb.AppendLine($"Summary: {HtmlEncode(r.Summary ?? string.Empty)}");
+                    sb.AppendLine("</div>");
+                }
+
+                string? html = options.PreferHtmlSnapshot ? TryReadHtmlSnapshot(r.HtmlSnapshotPath) : null;
+                if (string.IsNullOrWhiteSpace(html))
+                {
+                    sb.AppendLine("<div class='missing'>HTML snapshot not found.</div>");
+                    sb.AppendLine("<pre>");
+                    sb.AppendLine(HtmlEncode(NormalizePlainText(r.Text)));
+                    sb.AppendLine("</pre>");
+                }
+                else
+                {
+                    sb.AppendLine("<div class='html-wrap'>");
+                    sb.AppendLine(html);
+                    sb.AppendLine("</div>");
+                }
+
+                sb.AppendLine("</section>");
+            }
+
+            sb.AppendLine("</body>");
+            sb.AppendLine("</html>");
+            return sb.ToString();
+        }
+
+        private static string BuildPerTurnHtml(TransferRecord r, LogExportOptions options)
+        {
+            string? html = options.PreferHtmlSnapshot ? TryReadHtmlSnapshot(r.HtmlSnapshotPath) : null;
+            if (!string.IsNullOrWhiteSpace(html))
+            {
+                return html;
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine("<!doctype html>");
+            sb.AppendLine("<html lang='ja'>");
+            sb.AppendLine("<head><meta charset='utf-8'><title>HTML Snapshot Missing</title></head>");
+            sb.AppendLine("<body>");
+            sb.AppendLine($"<h1>Turn {r.TurnNumber}</h1>");
+            sb.AppendLine("<p>HTML snapshot not found. Below is the fallback text output.</p>");
+            sb.AppendLine("<pre>");
+            sb.AppendLine(HtmlEncode(NormalizePlainText(r.Text)));
+            sb.AppendLine("</pre>");
+            sb.AppendLine("</body></html>");
+            return sb.ToString();
+        }
+
+        private static string BuildCombinedMarkdown(List<TransferRecord> records, LogExportOptions options)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("# AI Site HTML Export");
+            sb.AppendLine();
+
+            foreach (var r in records)
+            {
+                sb.AppendLine($"## Turn {r.TurnNumber}: {Safe(r.SourceSite)} -> {Safe(r.TargetSite)}");
                 sb.AppendLine();
-                sb.AppendLine(r.Text);
+
+                if (options.IncludeMetadata)
+                {
+                    sb.AppendLine($"- Timestamp: {r.Timestamp:yyyy-MM-dd HH:mm:ss}");
+                    sb.AppendLine($"- Direction: {Safe(r.Direction)}");
+                    sb.AppendLine($"- Summary: {Safe(r.Summary)}");
+                    sb.AppendLine();
+                }
+
+                sb.AppendLine(ConvertRecordToMarkdown(r, options));
                 sb.AppendLine();
                 sb.AppendLine("---");
                 sb.AppendLine();
             }
 
-            // 次アクション欄
-            sb.AppendLine("## \u6b21\u30a2\u30af\u30b7\u30e7\u30f3");
-            sb.AppendLine();
-            sb.AppendLine("- [ ] \uff08\u3053\u3053\u306b\u30e6\u30fc\u30b6\u30fc\u304c\u8a18\u5165\uff09");
-            sb.AppendLine();
-
-            await File.WriteAllTextAsync(path, sb.ToString(), Encoding.UTF8);
-            return path;
+            return sb.ToString();
         }
 
-        // ---------------------------------------------------------------
-        // JSON エクスポート
-        // ---------------------------------------------------------------
-
-        public async Task<string> ExportJsonAsync(
-            IReadOnlyList<TransferRecord>   records,
-            IReadOnlyList<QuoteReference>   quotes,
-            IReadOnlyList<ResearchTagEntry> researchTags,
-            DebatePreset? preset = null,
-            string?       topic  = null)
+        private static string BuildPerTurnMarkdown(TransferRecord r, LogExportOptions options)
         {
-            Directory.CreateDirectory(ExportFolder);
-            string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string path  = Path.Combine(ExportFolder, $"debate_result_{stamp}.json");
-
-            var payload = new
-            {
-                exportedAt   = DateTime.Now.ToString("o"),
-                topic        = topic ?? string.Empty,
-                preset       = preset?.Name ?? string.Empty,
-                turnPolicy   = preset?.TurnPolicy.ToString() ?? string.Empty,
-                researchMode = preset?.ResearchMode ?? false,
-                records      = records.Select(r => new
-                {
-                    r.TurnNumber,
-                    r.Direction,
-                    r.Text,
-                    r.Summary,
-                    r.TimestampText
-                }),
-                quotes = quotes.Select(q => new
-                {
-                    q.QuoteId,
-                    q.SourceMessageId,
-                    q.SourceParticipantId,
-                    q.SourceTurnNumber,
-                    q.QuotedText,
-                    q.QuoteType
-                }),
-                researchTags = researchTags.Select(t => new
-                {
-                    t.TagType,
-                    t.TurnNumber,
-                    t.Content,
-                    t.MessageId
-                })
-            };
-
-            string json = JsonSerializer.Serialize(
-                payload,
-                new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(path, json, Encoding.UTF8);
-            return path;
-        }
-
-        // ---------------------------------------------------------------
-        // プレーンテキスト エクスポート
-        // ---------------------------------------------------------------
-
-        public async Task<string> ExportTxtAsync(
-            IReadOnlyList<TransferRecord> records,
-            string? topic = null)
-        {
-            Directory.CreateDirectory(ExportFolder);
-            string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string path  = Path.Combine(ExportFolder, $"debate_log_{stamp}.txt");
-
             var sb = new StringBuilder();
-            if (!string.IsNullOrWhiteSpace(topic))
-                sb.AppendLine($"\u8b70\u984c: {topic}");
-            sb.AppendLine($"\u30a8\u30af\u30b9\u30dd\u30fc\u30c8: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine(new string('=', 60));
+            sb.AppendLine($"# Turn {r.TurnNumber}: {Safe(r.SourceSite)} -> {Safe(r.TargetSite)}");
             sb.AppendLine();
 
-            foreach (var r in records)
+            if (options.IncludeMetadata)
             {
-                sb.AppendLine(
-                    $"[Turn {r.TurnNumber}] {r.Direction}  {r.TimestampText}");
-                sb.AppendLine(r.Text);
-                sb.AppendLine(new string('-', 40));
+                sb.AppendLine($"- Timestamp: {r.Timestamp:yyyy-MM-dd HH:mm:ss}");
+                sb.AppendLine($"- Direction: {Safe(r.Direction)}");
+                sb.AppendLine($"- Summary: {Safe(r.Summary)}");
                 sb.AppendLine();
             }
 
-            await File.WriteAllTextAsync(path, sb.ToString(), Encoding.UTF8);
-            return path;
+            sb.AppendLine(ConvertRecordToMarkdown(r, options));
+            return sb.ToString();
         }
 
-        // ---------------------------------------------------------------
-        // ヘルパー
-        // ---------------------------------------------------------------
-
-        private static void AppendAgreements(
-            StringBuilder sb, IReadOnlyList<TransferRecord> records)
+        private static string BuildCombinedText(List<TransferRecord> records, LogExportOptions options)
         {
-            var agreed  = records.Where(r => ContainsAgreement(r.Text)).ToList();
-            var opposed = records.Where(r => ContainsOpposition(r.Text)).ToList();
+            var sb = new StringBuilder();
 
-            sb.AppendLine("## \u5408\u610f\u70b9");
-            sb.AppendLine();
-            if (agreed.Count > 0)
-                foreach (var r in agreed)
-                    sb.AppendLine($"- Turn {r.TurnNumber} [{r.Direction}]: {r.Summary}");
-            else
-                sb.AppendLine("\uff08\u660e\u78ba\u306a\u5408\u610f\u70b9\u306f\u691c\u51fa\u3055\u308c\u307e\u305b\u3093\u3067\u3057\u305f\uff09");
-            sb.AppendLine();
+            foreach (var r in records)
+            {
+                sb.AppendLine($"===== Turn {r.TurnNumber}: {Safe(r.SourceSite)} -> {Safe(r.TargetSite)} =====");
 
-            sb.AppendLine("## \u5bfe\u7acb\u70b9");
-            sb.AppendLine();
-            if (opposed.Count > 0)
-                foreach (var r in opposed)
-                    sb.AppendLine($"- Turn {r.TurnNumber} [{r.Direction}]: {r.Summary}");
-            else
-                sb.AppendLine("\uff08\u660e\u78ba\u306a\u5bfe\u7acb\u70b9\u306f\u691c\u51fa\u3055\u308c\u307e\u305b\u3093\u3067\u3057\u305f\uff09");
-            sb.AppendLine();
+                if (options.IncludeMetadata)
+                {
+                    sb.AppendLine($"Timestamp: {r.Timestamp:yyyy-MM-dd HH:mm:ss}");
+                    sb.AppendLine($"Direction: {Safe(r.Direction)}");
+                    sb.AppendLine($"Summary: {Safe(r.Summary)}");
+                    sb.AppendLine();
+                }
 
-            sb.AppendLine("## \u672a\u89e3\u6c7a\u70b9");
-            sb.AppendLine();
-            sb.AppendLine("\uff08\u30e6\u30fc\u30b6\u30fc\u307e\u305f\u306f\u53f8\u4f1a\u304c\u8a18\u5165\uff09");
-            sb.AppendLine();
+                sb.AppendLine(ConvertRecordToText(r, options));
+                sb.AppendLine();
+            }
+
+            return sb.ToString();
         }
 
-        private static bool ContainsAgreement(string text) =>
-            text.Contains("\u540c\u610f") || text.Contains("\u8cdb\u6210") ||
-            text.Contains("\u305d\u306e\u901a\u308a") || text.Contains("\u540c\u69d8") ||
-            text.Contains("agree",  StringComparison.OrdinalIgnoreCase) ||
-            text.Contains("correct",StringComparison.OrdinalIgnoreCase);
+        private static string BuildPerTurnText(TransferRecord r, LogExportOptions options)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Turn {r.TurnNumber}: {Safe(r.SourceSite)} -> {Safe(r.TargetSite)}");
 
-        private static bool ContainsOpposition(string text) =>
-            text.Contains("\u53cd\u8ad6") || text.Contains("\u3057\u304b\u3057") ||
-            text.Contains("\u4e00\u65b9") || text.Contains("\u554f\u984c") ||
-            text.Contains("disagree",StringComparison.OrdinalIgnoreCase) ||
-            text.Contains("however", StringComparison.OrdinalIgnoreCase);
+            if (options.IncludeMetadata)
+            {
+                sb.AppendLine($"Timestamp: {r.Timestamp:yyyy-MM-dd HH:mm:ss}");
+                sb.AppendLine($"Direction: {Safe(r.Direction)}");
+                sb.AppendLine($"Summary: {Safe(r.Summary)}");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine(ConvertRecordToText(r, options));
+            return sb.ToString();
+        }
+
+        private static string ConvertRecordToMarkdown(TransferRecord r, LogExportOptions options)
+        {
+            string? html = options.PreferHtmlSnapshot ? TryReadHtmlSnapshot(r.HtmlSnapshotPath) : null;
+            if (string.IsNullOrWhiteSpace(html))
+            {
+                return NormalizePlainText(r.Text);
+            }
+
+            return HtmlToMarkdownLikeText(html);
+        }
+
+        private static string ConvertRecordToText(TransferRecord r, LogExportOptions options)
+        {
+            string? html = options.PreferHtmlSnapshot ? TryReadHtmlSnapshot(r.HtmlSnapshotPath) : null;
+            if (string.IsNullOrWhiteSpace(html))
+            {
+                return NormalizePlainText(r.Text);
+            }
+
+            return HtmlToPlainText(html);
+        }
+
+        private static string? TryReadHtmlSnapshot(string? path)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path)) return null;
+                if (!File.Exists(path)) return null;
+                return File.ReadAllText(path, Encoding.UTF8);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string HtmlToMarkdownLikeText(string html)
+        {
+            if (string.IsNullOrWhiteSpace(html)) return string.Empty;
+
+            html = RemoveNoiseBlocks(html);
+
+            html = Regex.Replace(html, @"<br\s*/?>", "\n", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"</p\s*>", "\n\n", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<li\b[^>]*>", "- ", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"</li\s*>", "\n", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<h1\b[^>]*>", "# ", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<h2\b[^>]*>", "## ", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<h3\b[^>]*>", "### ", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<h4\b[^>]*>", "#### ", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<h5\b[^>]*>", "##### ", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<h6\b[^>]*>", "###### ", RegexOptions.IgnoreCase);
+
+            html = Regex.Replace(html, @"<(strong|b)\b[^>]*>", "**", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"</(strong|b)\s*>", "**", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<(em|i)\b[^>]*>", "*", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"</(em|i)\s*>", "*", RegexOptions.IgnoreCase);
+
+            html = Regex.Replace(html, @"<script\b[^<]*(?:(?!</script>)<[^<]*)*</script>", "", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<style\b[^<]*(?:(?!</style>)<[^<]*)*</style>", "", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<[^>]+>", "");
+            html = WebUtility.HtmlDecode(html);
+            html = html.Replace("\u00A0", " ");
+            html = Regex.Replace(html, @"\r\n|\r", "\n");
+            html = Regex.Replace(html, @"[ \t]+\n", "\n");
+            html = Regex.Replace(html, @"\n{3,}", "\n\n");
+
+            return html.Trim();
+        }
+
+        private static string HtmlToPlainText(string html)
+        {
+            if (string.IsNullOrWhiteSpace(html)) return string.Empty;
+
+            html = RemoveNoiseBlocks(html);
+
+            html = Regex.Replace(html, @"<br\s*/?>", "\n", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"</p\s*>", "\n\n", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"</div\s*>", "\n", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<li\b[^>]*>", "- ", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"</li\s*>", "\n", RegexOptions.IgnoreCase);
+
+            html = Regex.Replace(html, @"<script\b[^<]*(?:(?!</script>)<[^<]*)*</script>", "", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<style\b[^<]*(?:(?!</style>)<[^<]*)*</style>", "", RegexOptions.IgnoreCase);
+            html = Regex.Replace(html, @"<[^>]+>", "");
+            html = WebUtility.HtmlDecode(html);
+            html = html.Replace("\u00A0", " ");
+            html = Regex.Replace(html, @"\r\n|\r", "\n");
+            html = Regex.Replace(html, @"[ \t]+\n", "\n");
+            html = Regex.Replace(html, @"\n{3,}", "\n\n");
+
+            return html.Trim();
+        }
+
+        private static string RemoveNoiseBlocks(string html)
+        {
+            if (string.IsNullOrWhiteSpace(html)) return string.Empty;
+
+            html = Regex.Replace(html, @"<button\b[^>]*>.*?</button>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            html = Regex.Replace(html, @"<svg\b[^>]*>.*?</svg>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            html = Regex.Replace(html, @"<img\b[^>]*>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+            html = Regex.Replace(html, @"<span\b[^>]*class=""[^""]*citation[^""]*""[^>]*>.*?</span>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            html = Regex.Replace(html, @"<div\b[^>]*class=""[^""]*citation[^""]*""[^>]*>.*?</div>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            html = Regex.Replace(html, @"<span\b[^>]*class=""[^""]*katex-html[^""]*""[^>]*>.*?</span>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+            return html;
+        }
+
+        private static string NormalizePlainText(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+            text = WebUtility.HtmlDecode(text);
+            text = text.Replace("\u00A0", " ");
+            text = Regex.Replace(text, @"<[^>]+>", string.Empty);
+            text = Regex.Replace(text, @"\r\n|\r", "\n");
+            text = Regex.Replace(text, @"\n{3,}", "\n\n");
+
+            return text.Trim();
+        }
+
+        private static string BuildPerTurnFileName(TransferRecord r, string ext)
+        {
+            string src = SanitizeFileName(r.SourceSite);
+            string tgt = SanitizeFileName(r.TargetSite);
+            return $"Turn{r.TurnNumber:000}_{src}_to_{tgt}.{ext}";
+        }
+
+        private static string GetExtension(LogExportFormat format) => format switch
+        {
+            LogExportFormat.Html => "html",
+            LogExportFormat.Markdown => "md",
+            LogExportFormat.Text => "txt",
+            _ => "txt"
+        };
+
+        private static string GetSaveFilter(LogExportFormat format) => format switch
+        {
+            LogExportFormat.Html => "HTML file (*.html)|*.html|All files (*.*)|*.*",
+            LogExportFormat.Markdown => "Markdown file (*.md)|*.md|Text file (*.txt)|*.txt|All files (*.*)|*.*",
+            LogExportFormat.Text => "Text file (*.txt)|*.txt|All files (*.*)|*.*",
+            _ => "All files (*.*)|*.*"
+        };
+
+        private static string SanitizeFileName(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "Unknown";
+            foreach (char c in Path.GetInvalidFileNameChars())
+            {
+                value = value.Replace(c, '_');
+            }
+            return value.Trim();
+        }
+
+        private static string HtmlEncode(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
+        private static string Safe(string? value) => value ?? string.Empty;
     }
 }

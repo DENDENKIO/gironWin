@@ -120,9 +120,11 @@ namespace gironWin
             {
                 type       = "researchTag",
                 tagType    = tag.TagType,
-                content    = tag.Content,
+                subTagType = tag.SubTagType,
+                text       = tag.Text,
                 turnNumber = tag.TurnNumber,
-                messageId  = tag.MessageId
+                messageId  = tag.MessageId,
+                importance = tag.Importance
             });
             await File.AppendAllTextAsync(_jsonlPath, line + "\n", Encoding.UTF8);
         }
@@ -169,32 +171,6 @@ namespace gironWin
             }
         }
 
-        // ---------------------------------------------------------------
-        // Markdown / JSON / txt エクスポート（後方互換）
-        // ---------------------------------------------------------------
 
-        public async Task<string> ExportMarkdownAsync()
-        {
-            var svc = new ExportService();
-            return await svc.ExportMarkdownAsync(
-                ToTransferRecords(),
-                new List<QuoteReference>(_quotes),
-                new List<ResearchTagEntry>(_researchTags));
-        }
-
-        public async Task<string> ExportJsonAsync()
-        {
-            var svc = new ExportService();
-            return await svc.ExportJsonAsync(
-                ToTransferRecords(),
-                new List<QuoteReference>(_quotes),
-                new List<ResearchTagEntry>(_researchTags));
-        }
-
-        public async Task<string> ExportTxtAsync()
-        {
-            var svc = new ExportService();
-            return await svc.ExportTxtAsync(ToTransferRecords());
-        }
     }
 }

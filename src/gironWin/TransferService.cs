@@ -23,27 +23,74 @@ namespace gironWin
 
         private void Log(string message) => DebugLog?.Invoke(this, message);
 
-        // SetInputAsync 失敗時に最大3回リトライ（0秒・1秒・3秒後）
+        // ★ 修正: リトライ前に再度 SetInput を呼ばない（追記バグの原因）
+        //   クリアは TransferAsync 冒頭で1回行い、ここでは本文挿入だけ試みる
         private async Task<bool> TrySetInputWithRetryAsync(
             IAiSiteAdapter adapter, WebView2 webView, string text)
         {
-            int[] waitMs = { 0, 1000, 3000 };
+            int[] waitMs = { 0, 1500, 4000 };
             for (int i = 0; i < waitMs.Length; i++)
             {
-                if (waitMs[i] > 0) await Task.Delay(waitMs[i]);
+                if (waitMs[i] > 0)
+                {
+                    Log($"[SetInput] {adapter.SiteName} retry wait {waitMs[i]}ms...");
+                    await Task.Delay(waitMs[i]);
 
-                // ★ WebView2 操作は必ず UI スレッドで行う (Dispatcher.InvokeAsync + Unwrap)
+                    // ★ 修正: リトライ前に再クリアのみ行い、本文は1回だけ渡す
+                    //   （以前はここで SetInput(empty) → SetInput(text) と2回呼んでいた）
+                    await Application.Current.Dispatcher.InvokeAsync(() =>
+                        adapter.SetInputAsync(webView, string.Empty)
+                    ).Task.Unwrap();
+                    await Task.Delay(300);
+                }
+
                 bool ok = await Application.Current.Dispatcher.InvokeAsync(() =>
                     adapter.SetInputAsync(webView, text)
                 ).Task.Unwrap();
 
                 Log($"[SetInput] {adapter.SiteName} attempt={i + 1} result={ok}");
-                if (ok) return true;
+                if (ok)
+                {
+                    // ★ デバッグログ: DOM の実際の中身を読み返す（追記バグ診断用）
+                    try
+                    {
+                        string checkScript = @"
+(() => {
+    const selectors = [
+        '#ask-input[contenteditable=""true""]',
+        '#ask-input',
+        'div[contenteditable=""true""][role=""textbox""]',
+        'div[role=""textbox""][contenteditable=""true""]',
+        'div[contenteditable=""true""]',
+        'textarea',
+        'input[type=""text""]'
+    ];
+    let el = null;
+    for (const sel of selectors) {
+        const found = Array.from(document.querySelectorAll(sel)).filter(e => {
+            const s = window.getComputedStyle(e);
+            return s.display !== 'none' && s.visibility !== 'hidden' && e.offsetParent !== null;
+        });
+        if (found.length > 0) { el = found[0]; break; }
+    }
+    if (!el) return 'DOM-NOT-FOUND';
+    const val = (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') 
+        ? el.value 
+        : (el.innerText || el.textContent || '');
+    return JSON.stringify({ len: val.length, preview: val.substring(0, 100).replace(/\n/g, ' ') });
+})();";
+                        string valJson = await webView.ExecuteScriptAsync(checkScript);
+                        Log($"[DEBUG SetInput] {adapter.SiteName} DOM state: {valJson}");
+                    }
+                    catch (Exception ex) { Log($"[DEBUG SetInput] DOM check failed: {ex.Message}"); }
+
+                    return true;
+                }
             }
             return false;
         }
 
-        // ★ SendAsync を最大3回試みるヘルパー
+        // SendAsync を最大3回試みるヘルパー
         private async Task<bool> TrySendWithRetryAsync(
             IAiSiteAdapter adapter, WebView2 webView, string siteName)
         {
@@ -53,7 +100,6 @@ namespace gironWin
             {
                 await Task.Delay(waitMs[i]);
 
-                // ★ WebView2 操作は必ず UI スレッドで行う
                 bool ok = await Application.Current.Dispatcher.InvokeAsync(() =>
                     adapter.SendAsync(webView)
                 ).Task.Unwrap();
@@ -90,7 +136,6 @@ namespace gironWin
 
             if (string.IsNullOrWhiteSpace(text))
             {
-                // ★ GetSelectedTextAsync も UI スレッドで
                 text = await Application.Current.Dispatcher.InvokeAsync(() =>
                     sourceAdapter.GetSelectedTextAsync(sourceWebView)
                 ).Task.Unwrap();
@@ -107,8 +152,21 @@ namespace gironWin
             if (appendBridge)
                 text += "\n\nこの意見についてどう考えますか？";
 
-            Log($"[Transfer] FinalText.Length={text.Length}");
-            Log($"[Transfer] FinalText.Preview={(text.Length > 120 ? text[..120] : text)}");
+            // ★ デバッグ: 転送テキスト全体の先頭・末尾をログ出力
+            {
+                string preview = text.Length <= 500
+                    ? text
+                    : text[..300] + $"\n...(中略 {text.Length - 400}文字)...\n" + text[^100..];
+                Log($"[Transfer] FinalText.Length={text.Length}");
+                Log($"[Transfer] FinalText.Content=\n---BEGIN---\n{preview}\n---END---");
+            }
+
+            // ★ 入力前に入力欄を必ず1回だけ空クリア
+            Log($"[Transfer] Clearing input on {targetAdapter.SiteName}...");
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+                targetAdapter.SetInputAsync(targetWebView, string.Empty)
+            ).Task.Unwrap();
+            await Task.Delay(300);
 
             bool inputOk = await TrySetInputWithRetryAsync(targetAdapter, targetWebView, text);
             if (!inputOk)
@@ -120,20 +178,6 @@ namespace gironWin
                 if (!sendOk)
                     return TransferResult.Fail($"送信操作に失敗しました（3回試行）。Target={targetAdapter.SiteName}");
             }
-
-            var record = new TransferRecord
-            {
-                Timestamp = DateTime.Now,
-                SourceSite = sourceAdapter.SiteName,
-                TargetSite = targetAdapter.SiteName,
-                Direction = $"{sourceAdapter.SiteName} → {targetAdapter.SiteName}",
-                Text = text,
-                Submitted = submit,
-                Status = submit ? "送信完了" : "入力完了"
-            };
-
-            // ★ ObservableCollection への Insert も UI スレッドで行う
-            Application.Current.Dispatcher.Invoke(() => _records.Insert(0, record));
 
             return TransferResult.Ok(submit
                 ? $"{targetAdapter.SiteName} に送信しました。"

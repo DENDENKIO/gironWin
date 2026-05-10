@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -8,56 +7,85 @@ namespace gironWin
 {
     public partial class ResearchNoteWindow : Window
     {
-        private readonly ResearchService _researchService;
-        private List<ResearchTagEntry>   _allEntries = new();
+        private readonly ResearchModeService _service;
+        private IReadOnlyList<ResearchTagEntry> _allEntries = new List<ResearchTagEntry>();
 
-        public ResearchNoteWindow(ResearchService researchService)
+        public ResearchNoteWindow(ResearchModeService service)
         {
             InitializeComponent();
-            _researchService = researchService;
-            Refresh();
+            _service = service;
+
+            // Loaded 後に初回描画（コントロールが確実に生成されてから）
+            Loaded += (_, _) =>
+            {
+                if (TagGrid != null)
+                    TagGrid.SelectionChanged += TagGrid_SelectionChanged;
+                Refresh();
+            };
         }
 
-        private void Refresh()
+        // ---------------------------------------------------------------
+        // 表示更新
+        // ---------------------------------------------------------------
+
+        public void Refresh()
         {
-            _allEntries = _researchService.Entries.ToList();
+            if (_service == null) return;
+            // TagGrid がまだ存在しない場合は何もしない
+            if (TagGrid == null) return;
+
+            _allEntries = _service.Entries;
             ApplyFilter();
         }
 
         private void ApplyFilter()
         {
-            string filter =
-                (TagFilterCombo.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                ?? "\u3059\u3079\u3066";
+            // コントロール null ガード
+            if (TagGrid == null || CountLabel == null) return;
 
-            var filtered = filter == "\u3059\u3079\u3066"
-                ? _allEntries
-                : _allEntries.Where(e => e.TagType == filter).ToList();
+            string tagFilter = (TagFilterCombo?.SelectedItem as ComboBoxItem)
+                                   ?.Content?.ToString() ?? "すべて";
+            string importanceFilter = (ImportanceFilterCombo?.SelectedItem as ComboBoxItem)
+                                          ?.Content?.ToString() ?? "すべて";
 
-            TagGrid.ItemsSource = filtered;
-            CountLabel.Text     = $"{filtered.Count} \u4ef6";
-        }
+            var filtered = _allEntries.AsEnumerable();
 
-        private void TagFilterCombo_SelectionChanged(
-            object sender, SelectionChangedEventArgs e) => ApplyFilter();
+            if (tagFilter != "すべて")
+                filtered = filtered.Where(e => e.TagType == tagFilter || e.SubTagType == tagFilter);
 
-        private void CopyMarkdownButton_Click(object sender, RoutedEventArgs e)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("# \u7814\u7a76\u30ce\u30fc\u30c8");
-            sb.AppendLine();
-
-            foreach (var group in _allEntries.GroupBy(e => e.TagType))
+            if (importanceFilter != "すべて")
             {
-                sb.AppendLine($"## {group.Key}");
-                foreach (var entry in group)
-                    sb.AppendLine($"- **Turn {entry.TurnNumber}**: {entry.Content}");
-                sb.AppendLine();
+                int imp = importanceFilter.Contains("高") ? 3
+                         : importanceFilter.Contains("中") ? 2
+                         : 1;
+                filtered = filtered.Where(e => e.Importance == imp);
             }
 
-            Clipboard.SetText(sb.ToString());
-            MessageBox.Show("\u30af\u30ea\u30c3\u30d7\u30dc\u30fc\u30c9\u306b\u30b3\u30d4\u30fc\u3057\u307e\u3057\u305f\u3002",
-                "\u7814\u7a76\u30ce\u30fc\u30c8", MessageBoxButton.OK, MessageBoxImage.Information);
+            var list = filtered
+                .OrderByDescending(e => e.Importance)
+                .ThenBy(e => e.TurnNumber)
+                .ToList();
+
+            TagGrid.ItemsSource = list;
+            CountLabel.Text     = $"{list.Count} 件";
+        }
+
+        // ---------------------------------------------------------------
+        // イベント
+        // ---------------------------------------------------------------
+
+        private void Filter_Changed(object sender, SelectionChangedEventArgs e) => ApplyFilter();
+
+        private void TagGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (TagGrid?.SelectedItem is ResearchTagEntry entry)
+                DetailBox.Text = $"[{entry.DisplayTag}] Turn {entry.TurnNumber} | {entry.ImportanceLabel}\n{entry.Text}";
+        }
+
+        private void CopyButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (TagGrid?.SelectedItem is ResearchTagEntry entry)
+                Clipboard.SetText(entry.Text);
         }
 
         private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();

@@ -93,6 +93,24 @@ namespace gironWin
             Role  = "Reviewer"
         };
 
+        public static PromptProfile UltimateExpertVsBeginnerPreset => new()
+        {
+            ProfileId   = "ultimate_expert_vs_beginner",
+            DisplayName = "究極の専門家 vs たとえ上手な素人",
+            LeftName    = "究極の専門家",
+            RightName   = "たとえ上手な素人",
+            LeftSystemPrompt =
+                "あなたは対象分野について究極レベルの専門知識を持つ人物です。" +
+                "厳密で体系的、正確で誤解のない説明を行ってください。" +
+                "前提条件、定義、例外、限界、実務上の注意点も必要に応じて示してください。",
+            RightSystemPrompt =
+                "あなたは専門知識を一切持たない素人ですが、たとえ話や日常的な比喩で理解しようとするのが得意です。" +
+                "わからないことは率直に質問し、専門家の説明を一般人向けのたとえで言い換えて確認してください。" +
+                "知ったかぶりはせず、素朴だが本質的な疑問を投げかけてください。",
+            Topic = string.Empty,
+            Role  = "Dialogue"
+        };
+
         // ---------------------------------------------------------------
         // 旧 API 互換: Presets リスト
         // ---------------------------------------------------------------

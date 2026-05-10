@@ -1,67 +1,26 @@
 <Window x:Class="gironWin.TextPreviewWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="&#x767a;&#x8a00;&#x30d7;&#x30ec;&#x30d3;&#x30e5;&#x30fc;"
-        Width="600" Height="480"
-        MinWidth="400" MinHeight="300"
-        WindowStartupLocation="CenterOwner"
-        Background="#1E1E1E">
-
-    <Window.Resources>
-        <Style TargetType="Button">
-            <Setter Property="Background"  Value="#2D2D2D"/>
-            <Setter Property="Foreground"  Value="#D4D4D4"/>
-            <Setter Property="BorderBrush" Value="#555"/>
-            <Setter Property="Padding"     Value="12,5"/>
-            <Setter Property="Cursor"      Value="Hand"/>
-        </Style>
-    </Window.Resources>
-
-    <DockPanel Margin="8">
-
-        <!-- &#x30c4;&#x30fc;&#x30eb;&#x30d0;&#x30fc; -->
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal"
-                    Margin="0,0,0,6">
-            <Button x:Name="CopyAllButton"
-                    Content="&#x1F4CB; &#x5168;&#x6587;&#x30b3;&#x30d4;&#x30fc;"
-                    Click="CopyAllButton_Click"
-                    Margin="0,0,6,0"/>
-            <Button x:Name="QuoteFullButton"
-                    Content="&#x300c;&#x300d;&#x5168;&#x6587;&#x5f15;&#x7528;"
-                    Click="QuoteFullButton_Click"
-                    Margin="0,0,6,0"/>
-            <Button x:Name="QuotePartialButton"
-                    Content="&#x2702; &#x9078;&#x629e;&#x5f15;&#x7528;"
-                    Click="QuotePartialButton_Click"
-                    Margin="0,0,6,0"/>
-            <TextBlock x:Name="StatusLabel"
-                       VerticalAlignment="Center"
-                       Foreground="#888"
-                       FontSize="12"
-                       Margin="6,0,0,0"/>
+        Title="[Legacy] 生成文章ログリーダー" Height="600" Width="800" WindowStartupLocation="CenterOwner">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+            <Button x:Name="PrevButton" Content="← 前へ" Width="80" Margin="0,0,10,0" Click="PrevButton_Click"/>
+            <TextBlock x:Name="PageInfoLabel" VerticalAlignment="Center" Margin="0,0,10,0"/>
+            <Button x:Name="NextButton" Content="次へ →" Width="80" Click="NextButton_Click"/>
+            <TextBlock x:Name="HeaderLabel" VerticalAlignment="Center" Margin="20,0,0,0" FontWeight="Bold"/>
         </StackPanel>
 
-        <!-- &#x9589;&#x3058;&#x308b;&#x30dc;&#x30bf;&#x30f3; -->
-        <Button DockPanel.Dock="Bottom"
-                Content="&#x9589;&#x3058;&#x308b;"
-                HorizontalAlignment="Right"
-                Margin="0,6,0,0"
-                Click="CloseButton_Click"/>
+        <RichTextBox x:Name="FullTextBox" Grid.Row="1" IsReadOnly="True" VerticalScrollBarVisibility="Auto" FontSize="14" Padding="10"/>
 
-        <!-- &#x672c;&#x6587;&#x30c6;&#x30ad;&#x30b9;&#x30c8; -->
-        <TextBox x:Name="ContentTextBox"
-                 IsReadOnly="True"
-                 TextWrapping="Wrap"
-                 AcceptsReturn="True"
-                 VerticalScrollBarVisibility="Auto"
-                 HorizontalScrollBarVisibility="Disabled"
-                 Background="#1E1E1E"
-                 Foreground="#D4D4D4"
-                 FontFamily="Consolas, Yu Gothic UI"
-                 FontSize="13"
-                 Padding="8"
-                 BorderThickness="1"
-                 BorderBrush="#444"
-                 SelectionBrush="#264F78"/>
-    </DockPanel>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="全文コピー" Width="100" Margin="0,0,10,0" Click="CopyButton_Click"/>
+            <Button Content="閉じる" Width="80" Click="CloseButton_Click"/>
+        </StackPanel>
+    </Grid>
 </Window>

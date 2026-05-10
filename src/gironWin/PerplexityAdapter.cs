@@ -49,9 +49,8 @@ namespace gironWin
 
             string escapedText = JsonSerializer.Serialize(text);
 
-            // ★ async/await/setTimeout を一切使わない同期スクリプト
             string script = $@"
-(() => {{
+(async () => {{
     const text = {escapedText};
 
     function isVisible(el) {{
@@ -91,11 +90,43 @@ namespace gironWin
         }} catch(e) {{ return 'textarea-err:' + e.message; }}
     }}
 
-    // contenteditable — まず全選択クリア
+    // ★ contenteditable: クリア → rAF で1フレーム待つ → 確認 → paste
+    // Step 1: 確実にクリア
     try {{
-        document.execCommand('selectAll', false, null);
-        document.execCommand('delete', false, null);
+        // selection API でクリア
+        const selection = window.getSelection();
+        if (selection && el.childNodes.length > 0) {{
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            selection.deleteFromDocument();
+        }}
+        // innerHTML も空にする（二重保険）
+        el.innerHTML = '';
+        // React の input イベントを発火してstate同期
+        el.dispatchEvent(new InputEvent('input', {{
+            bubbles: true,
+            inputType: 'deleteContentBackward'
+        }}));
     }} catch(e) {{}}
+
+    // Step 2: rAF で1フレーム待つ（React のバッチ更新完了を待つ）
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    // Step 3: クリアされたか確認
+    const afterClear = (el.innerText || el.textContent || '').trim();
+    if (afterClear.length > 0) {{
+        // まだ残っていたら強制クリア
+        try {{
+            el.innerHTML = '';
+            await new Promise(resolve => requestAnimationFrame(resolve));
+        }} catch(e) {{}}
+    }}
+
+    el.focus();
+
+    if (!text) return 'clear-ok';
 
     // ① DataTransfer paste
     try {{
@@ -104,11 +135,10 @@ namespace gironWin
         el.dispatchEvent(new ClipboardEvent('paste', {{
             bubbles: true, cancelable: true, clipboardData: dt
         }}));
+        // paste後もrAF1フレーム待ってから長さ確認
+        await new Promise(resolve => requestAnimationFrame(resolve));
         const cur = (el.innerText || el.textContent || '').trim();
         if (cur.length > 0) {{
-            el.dispatchEvent(new InputEvent('input', {{
-                bubbles: true, inputType: 'insertText', data: text
-            }}));
             return 'paste-ok:' + cur.length;
         }}
     }} catch(e) {{}}
@@ -116,17 +146,13 @@ namespace gironWin
     // ② execCommand insertText
     try {{
         el.focus();
-        document.execCommand('selectAll', false, null);
         const ok = document.execCommand('insertText', false, text);
         if (ok) {{
-            el.dispatchEvent(new InputEvent('input', {{
-                bubbles: true, inputType: 'insertText', data: text
-            }}));
             return 'execCmd-ok';
         }}
     }} catch(e) {{}}
 
-    // ③ 最終手段: innerText 直接代入 + React nativeInputValueSetter
+    // ③ 最終手段: textNode 直接挿入
     try {{
         el.innerHTML = '';
         const tn = document.createTextNode(text);
@@ -239,6 +265,9 @@ namespace gironWin
 
         public override async Task<string> ExtractLatestAsync(WebView2 webView)
         {
+            // ★ 変更箇所: TreeWalker → DFS手動走査
+            // katex/katex-display ルートを発見したら outerHTML ごと取得して子孫に入らない
+            // → katex-html(複雑span群) も katex-mathml(<math>) も outerHTML に含まれたまま保持
             string script = @"
 (() => {
     function norm(text) {
@@ -256,30 +285,51 @@ namespace gironWin
 
     function extractFullText(root) {
         if (!root) return '';
-        const walker = document.createTreeWalker(
-            root,
-            NodeFilter.SHOW_TEXT,
-            {
-                acceptNode(node) {
-                    if (!isVisible(node.parentElement)) return NodeFilter.FILTER_REJECT;
-                    const t = (node.nodeValue || '').trim();
-                    if (!t) return NodeFilter.FILTER_REJECT;
-                    if (t.length <= 2 && /^\d+$/.test(t)) return NodeFilter.FILTER_REJECT;
-                    return NodeFilter.FILTER_ACCEPT;
-                }
-            }
-        );
         const parts = [];
-        let n;
-        while ((n = walker.nextNode())) {
-            const val = (n.nodeValue || '').trim();
-            if (!val) continue;
-            const tag = (n.parentElement?.tagName || '').toLowerCase();
-            const isBlock = ['p','h1','h2','h3','h4','h5','h6',
-                             'li','blockquote','pre','div'].includes(tag);
-            if (isBlock && parts.length > 0) parts.push('\n');
-            parts.push(val);
+
+        function dfs(node) {
+            if (!node) return;
+
+            if (node.nodeType === 1) {
+                const cls = node.getAttribute('class') || '';
+
+                // ★ katex / katex-display ルート → outerHTML をそのまま挿入して子孫に入らない
+                //   outerHTML には katex-mathml(<math>) と katex-html の両方が含まれる
+                //   CSS注入により katex-html は非表示、katex-mathml(<math>) が表示される
+                if (/\bkatex\b/.test(cls) || /\bkatex-display\b/.test(cls)) {
+                    parts.push(node.outerHTML);
+                    return;
+                }
+
+                // citation → 完全スキップ
+                if (/\bcitation\b/.test(cls)) return;
+
+                // 非表示 → スキップ
+                if (!isVisible(node)) return;
+
+                const tag = node.tagName.toLowerCase();
+                const isBlock = ['p','h1','h2','h3','h4','h5','h6',
+                                  'li','blockquote','pre','div','table','tr','td','th'].includes(tag);
+                if (isBlock && parts.length > 0) {
+                    const last = parts[parts.length - 1];
+                    if (last !== '\n') parts.push('\n');
+                }
+
+                // 子を再帰処理
+                for (const child of node.childNodes) {
+                    dfs(child);
+                }
+            } else if (node.nodeType === 3) {
+                const val = (node.nodeValue || '').trim();
+                if (!val) return;
+                // 1-2文字の数字のみ（引用番号）は除外
+                if (val.length <= 2 && /^\d+$/.test(val)) return;
+                parts.push(val);
+            }
         }
+
+        dfs(root);
+
         return norm(parts.join(' ')
             .replace(/ \n /g, '\n')
             .replace(/\n +/g, '\n'));
@@ -314,18 +364,116 @@ namespace gironWin
         {
             string script = @"
 (() => {
+    // ① Stop ボタンが存在する
     if (document.querySelector('button[aria-label=""Stop""], button[aria-label*=""Stop""]'))
         return true;
-    if (document.querySelector('.animate-pulse,[data-generating=""true""],[aria-busy=""true""]'))
+
+    // ② 送信ボタンが無効化されている（生成中は送信ボタンが disabled になる）
+    const submitSelectors = [
+        'button#ask-submit',
+        'button[data-testid=""submit-button""]',
+        'button[aria-label=""Submit""]',
+        'button[aria-label*=""Send""]',
+        'button[type=""submit""]'
+    ];
+    for (const sel of submitSelectors) {
+        const btn = document.querySelector(sel);
+        if (btn) {
+            if (btn.disabled || btn.getAttribute('aria-disabled') === 'true')
+                return true;
+            return false;
+        }
+    }
+
+    // ③ ローディングインジケーター
+    if (document.querySelector('.animate-pulse, [data-generating=""true""], [aria-busy=""true""]'))
         return true;
+
     return false;
 })();";
             return await ExecScriptBoolAsync(webView, script);
         }
 
+        // ★ 変更箇所: 空 → CSS注入 + MutationObserver
+        // katex-html を非表示、katex-mathml (<math>) を表示する CSS を <style> タグで注入
+        // MutationObserver で動的レンダリング後も style が消えたら再注入する
         public override async Task InjectObserverAsync(WebView2 webView)
         {
-            await Task.CompletedTask;
+            if (webView?.CoreWebView2 == null) return;
+
+            string script = @"
+(() => {
+    const STYLE_ID = '__giron_katex_override';
+
+    function injectStyle() {
+        // 既に挿入済みならスキップ
+        if (document.getElementById(STYLE_ID)) return;
+
+        const style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = [
+            '.katex-html { display: none !important; }',
+
+            '.katex-mathml {',
+            '    position: static !important;',
+            '    clip: auto !important;',
+            '    clip-path: none !important;',
+            '    width: auto !important;',
+            '    height: auto !important;',
+            '    overflow: visible !important;',
+            '    visibility: visible !important;',
+            '    white-space: normal !important;',
+            '}',
+
+            '.katex-mathml math {',
+            '    display: inline-block !important;',
+            '    font-size: 1em !important;',
+            '}',
+
+            /* ★ 追加: 親.katexをinline-blockにして高さを確保 */
+            '.katex {',
+            '    display: inline-block !important;',
+            '}',
+
+            '.katex-display {',
+            '    display: block !important;',
+            '    text-align: center !important;',
+            '}',
+
+            '.katex-display .katex-mathml math {',
+            '    display: block !important;',
+            '    text-align: center !important;',
+            '    margin: 0.5em 0 !important;',
+            '}'
+        ].join('\n');
+
+        (document.head || document.documentElement).appendChild(style);
+    }
+
+    // 初回注入
+    injectStyle();
+
+    // ページ遷移・動的レンダリングで <head> がリセットされても再注入する
+    if (!window.__gironKatexObserver) {
+        window.__gironKatexObserver = new MutationObserver(() => {
+            injectStyle();
+        });
+        window.__gironKatexObserver.observe(document.documentElement, {
+            childList: true,
+            subtree: true
+        });
+    }
+})();
+";
+            try
+            {
+                await webView.ExecuteScriptAsync(script);
+                Log("[PerplexityObserver] katex CSS injected");
+            }
+            catch (Exception ex)
+            {
+                Log($"[PerplexityObserver] Error: {ex.Message}");
+            }
         }
     }
 }

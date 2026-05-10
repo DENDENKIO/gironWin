@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        xmlns:local="clr-namespace:gironWin"
         Title="gironWin" Height="900" Width="1400"
         Closing="Window_Closing">
 
@@ -55,6 +56,7 @@
                 <MenuItem x:Name="MenuIntervention" Header="✋ 介入(_I)" Click="MenuIntervention_Click"/>
                 <Separator/>
                 <MenuItem x:Name="MenuResearchNote" Header="研究ノートを表示" Click="MenuResearchNote_Click" IsEnabled="False"/>
+                <MenuItem x:Name="MenuModeratorSummary" Header="📊 司会サマリー" Click="MenuModeratorSummary_Click"/>
             </MenuItem>
             <MenuItem Header="表示">
                 <MenuItem Header="ログパネルを表示/非表示" Click="MenuToggleLog_Click"/>
@@ -73,12 +75,14 @@
                 <!-- 左席URL -->
                 <TextBlock Text="左席:" VerticalAlignment="Center" Margin="0,0,4,0" FontWeight="Bold"/>
                 <TextBox x:Name="LeftUrlTextBox" Width="200" Margin="0,0,8,0"
-                         Text="https://www.perplexity.ai/" VerticalContentAlignment="Center"/>
+                         Text="https://www.perplexity.ai/" VerticalContentAlignment="Center"
+                         KeyDown="UrlTextBox_KeyDown"/>
 
                 <!-- 右席URL -->
                 <TextBlock Text="右席:" VerticalAlignment="Center" Margin="0,0,4,0" FontWeight="Bold"/>
                 <TextBox x:Name="RightUrlTextBox" Width="200" Margin="0,0,8,0"
-                         Text="https://gemini.google.com/" VerticalContentAlignment="Center"/>
+                         Text="https://gemini.google.com/" VerticalContentAlignment="Center"
+                         KeyDown="UrlTextBox_KeyDown"/>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
 
@@ -115,8 +119,7 @@
                 <!-- 介入ボタン -->
                 <Button x:Name="InterventionButton" Content="✋ 介入"
                         Click="InterventionButton_Click" IsEnabled="False"
-                        Margin="0,0,8,0" Padding="10,4"
-                        Background="#5D4037" Foreground="White" BorderThickness="0" Cursor="Hand"/>
+                        Margin="0,0,8,0" Style="{StaticResource PrimaryButton}"/>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
 
@@ -128,19 +131,50 @@
                 <Button Content="📋 プリセット" Style="{StaticResource SecondaryButton}"
                         Click="MenuPreset_Click" Margin="0,0,4,0"/>
 
+                <!-- プリセット解除ボタン -->
+                <Button x:Name="ClearPresetButton"
+                        Content="✖ プリセット解除"
+                        Style="{StaticResource SecondaryButton}"
+                        Click="ClearPresetButton_Click"
+                        Margin="0,0,8,0"/>
+
+                <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
+
+                <!-- 左右人物像 -->
+                <TextBlock Text="左人物像:" VerticalAlignment="Center" Margin="4,0,4,0"/>
+                <TextBox x:Name="LeftPersonaTextBox"
+                         Width="240"
+                         Height="54"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         VerticalContentAlignment="Top"
+                         ToolTip="左席の人物像・設定文。例: 設計思想を重視する実務経験20年の建築設計家"/>
+
+                <CheckBox x:Name="LeftRoleplayCheckBox"
+                          Content="なりきり"
+                          VerticalAlignment="Center"
+                          Margin="6,0,12,0"/>
+
+                <TextBlock Text="右人物像:" VerticalAlignment="Center" Margin="4,0,4,0"/>
+                <TextBox x:Name="RightPersonaTextBox"
+                         Width="240"
+                         Height="54"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         VerticalContentAlignment="Top"
+                         ToolTip="右席の人物像・設定文。例: 専門知識はないが素朴な疑問をぶつける一般人"/>
+
+                <CheckBox x:Name="RightRoleplayCheckBox"
+                          Content="なりきり"
+                          VerticalAlignment="Center"
+                          Margin="6,0,12,0"/>
+
                 <!-- 研究ノートボタン -->
                 <Button x:Name="ResearchNoteButton" Content="🔬 研究ノート" Style="{StaticResource SecondaryButton}"
                         Click="MenuResearchNote_Click" IsEnabled="False" Margin="0,0,4,0"/>
 
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
 
-                <!-- ★ ⚙ デバッグログボタン -->
-                <Button x:Name="DebugLogButton" Content="⚙"
-                        Click="DebugLogButton_Click"
-                        Width="28" Height="24" FontSize="14"
-                        Padding="0" Margin="0,0,0,0"
-                        ToolTip="デバッグログを開く (往復カウント・送信履歴など)"
-                        Background="#607D8B" Foreground="White" BorderThickness="0" Cursor="Hand"/>
             </WrapPanel>
         </Border>
 
@@ -250,34 +284,131 @@
             <!-- ログパネル -->
             <Grid Grid.Column="4" x:Name="LogPanel">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>   <!-- Row 0: 討論ログヘッダー -->
+                    <RowDefinition Height="*"/>      <!-- Row 1: ログリスト -->
+                    <RowDefinition Height="5"/>      <!-- Row 2: リサイズ用スプリッター -->
+                    <RowDefinition Height="200" MinHeight="100"/> <!-- Row 3: 詳細表示 (WebView2) -->
                 </Grid.RowDefinitions>
                 <Border Grid.Row="0" Background="#F3E5F5" Padding="6,3">
                     <TextBlock Text="討論ログ" FontWeight="Bold" FontSize="12"/>
                 </Border>
-                <ListBox Grid.Row="1" x:Name="TurnLogListBox"
+                <ListBox x:Name="TurnLogListBox"
+                         Grid.Row="1"
+                         Background="{StaticResource SurfaceBrush}"
+                         BorderThickness="0"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         VirtualizingPanel.IsVirtualizing="True"
+                         VirtualizingPanel.VirtualizationMode="Recycling"
                          SelectionChanged="TurnLogListBox_SelectionChanged">
+
+                    <!-- コンバーター登録 -->
+                    <ListBox.Resources>
+                        <local:TurnLogTextConverter         x:Key="LogTextConverter"/>
+                        <local:DirectionToLabelConverter    x:Key="DirLabelConverter"/>
+                        <local:DirectionToColorBrushConverter x:Key="DirColorConverter"/>
+                    </ListBox.Resources>
+
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <Border Padding="4,3" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1">
+                            <Border Margin="0,1"
+                                    Padding="8,6"
+                                    CornerRadius="4"
+                                    Background="{StaticResource Surface2Brush}">
                                 <StackPanel>
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding TurnNumber, StringFormat='T{0}'}"
-                                                   FontWeight="Bold" FontSize="11" Foreground="#555" Margin="0,0,4,0"/>
-                                        <TextBlock Text="{Binding Direction}" FontSize="10" Foreground="#888"/>
-                                        <TextBlock Text="{Binding ApprovalStatusDisplay}" Margin="4,0,0,0" FontSize="12"/>
-                                    </StackPanel>
-                                    <TextBlock Text="{Binding Summary}" TextWrapping="Wrap"
-                                               FontSize="11" Foreground="#333" MaxWidth="240"
-                                               TextTrimming="CharacterEllipsis"/>
+
+                                    <!-- ヘッダー行：Turn番号 + 方向バッジ + 時刻 -->
+                                    <Grid Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- Turn番号 -->
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding TurnNumber, StringFormat='T{0}'}"
+                                                   FontWeight="Bold"
+                                                   Foreground="{StaticResource AccentBrush}"
+                                                   FontSize="11"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,6,0"/>
+
+                                        <!-- 方向バッジ -->
+                                        <Border Grid.Column="1"
+                                                Background="{Binding Direction, Converter={StaticResource DirColorConverter}}"
+                                                CornerRadius="3"
+                                                Padding="5,1"
+                                                VerticalAlignment="Center"
+                                                Margin="0,0,6,0">
+                                            <TextBlock Text="{Binding Direction, Converter={StaticResource DirLabelConverter}}"
+                                                       Foreground="White"
+                                                       FontSize="10"
+                                                       FontWeight="SemiBold"/>
+                                        </Border>
+
+                                        <!-- スペーサー -->
+                                        <TextBlock Grid.Column="2"/>
+
+                                        <!-- 時刻 -->
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding Timestamp, StringFormat='HH:mm:ss'}"
+                                                   Foreground="{StaticResource TextFaintBrush}"
+                                                   FontSize="10"
+                                                   VerticalAlignment="Center"/>
+                                    </Grid>
+
+                                    <!-- 本文（\n変換・4行プレビュー） -->
+                                    <TextBlock Text="{Binding Summary,
+                                                     Converter={StaticResource LogTextConverter}}"
+                                               TextWrapping="Wrap"
+                                               Foreground="{StaticResource TextMutedBrush}"
+                                               FontSize="12"
+                                               LineHeight="18"
+                                               Margin="0,0,0,2"/>
+
+                                    <!-- 研究タグ表示（タグがある場合のみ） -->
+                                    <ItemsControl ItemsSource="{Binding Tags}"
+                                                  Visibility="{Binding HasTags,
+                                                      Converter={StaticResource BoolToVisConverter}}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel Orientation="Horizontal"/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Background="{StaticResource AccentSubtleBrush}"
+                                                        BorderBrush="{StaticResource AccentBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="2"
+                                                        Padding="4,1"
+                                                        Margin="0,2,4,0">
+                                                    <TextBlock Text="{Binding}"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               FontSize="10"/>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
                                 </StackPanel>
                             </Border>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
+
+                <GridSplitter Grid.Row="2"
+                              Height="5"
+                              HorizontalAlignment="Stretch"
+                              Background="#EEE"
+                              Margin="0,0"
+                              Visibility="{Binding Visibility, ElementName=LogDetailWebView}"/>
+
+                <wv2:WebView2 x:Name="LogDetailWebView"
+                              Grid.Row="3"
+                              Visibility="Collapsed"
+                              Margin="0"/>
             </Grid>
         </Grid>
 
@@ -297,7 +428,7 @@
                 <StackPanel Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center">
                     <TextBlock x:Name="ApprovalTitleLabel" Text="承認待ち:"
                                FontWeight="Bold" FontSize="12"/>
-                    <TextBlock x:Name="ApprovalDirectionLabel" Text="" FontSize="11" Foreground="#666"/>
+                    <TextBlock x:Name="ApprovalSourceLabel" Text="" FontSize="11" Foreground="#666"/>
                 </StackPanel>
 
                 <TextBox Grid.Column="1" x:Name="ApprovalTextBox"

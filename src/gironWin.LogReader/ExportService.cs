@@ -1,24 +1,3 @@
-コードを完全に確認しました。
-
-**原因が確定しました。** `gironWin.LogReader` プロジェクトには `ExportService` も `LogExportOptionsDialog` も存在しません。前回のコードは `gironWin`（メインプロジェクト）向けに書きましたが、実際のログリーダーは **`gironWin.LogReader` という別プロジェクト** です。 そのため、以下のすべてを `gironWin.LogReader` 内に置くかたちで、実コードに完全に合わせた完成版を書きます。
-
-***
-
-## 追加・変更するファイル一覧
-
-| ファイル | 対応 |
-|---|---|
-| `src/gironWin.LogReader/ExportService.cs` | 新規作成 |
-| `src/gironWin.LogReader/LogExportOptionsDialog.xaml` | 新規作成 |
-| `src/gironWin.LogReader/LogExportOptionsDialog.xaml.cs` | 新規作成 |
-| `src/gironWin.LogReader/MainWindow.xaml` | ボタン追加 |
-| `src/gironWin.LogReader/MainWindow.xaml.cs` | エクスポートメソッド追加 |
-
-***
-
-## 1. `ExportService.cs`（新規作成）
-
-```csharp
 // src/gironWin.LogReader/ExportService.cs
 using gironWin.Shared;
 using Microsoft.Win32;
@@ -29,7 +8,6 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Windows.Forms;
 
 namespace gironWin.LogReader
 {
@@ -77,12 +55,12 @@ namespace gironWin.LogReader
         {
             var dialog = new SaveFileDialog
             {
-                FileName       = options.BaseFileName,
-                DefaultExt     = Ext(options.Format),
-                Filter         = Filter(options.Format),
-                AddExtension   = true,
+                FileName        = options.BaseFileName,
+                DefaultExt      = Ext(options.Format),
+                Filter          = Filter(options.Format),
+                AddExtension    = true,
                 OverwritePrompt = true,
-                Title          = "連結エクスポートの保存先"
+                Title           = "連結エクスポートの保存先"
             };
             if (dialog.ShowDialog() != true)
                 return Fail("保存がキャンセルされました。");
@@ -101,16 +79,14 @@ namespace gironWin.LogReader
         // ─── Separate ───────────────────────────────────────────
         private LogExportResult ExportSeparate(List<TransferRecord> records, LogExportOptions options)
         {
-            using var dialog = new FolderBrowserDialog
+            var dialog = new OpenFolderDialog
             {
-                Description      = "個別ファイルの出力先フォルダを選択してください",
-                UseDescriptionForTitle = true,
-                ShowNewFolderButton    = true
+                Title = "個別ファイルの出力先フォルダを選択してください"
             };
-            if (dialog.ShowDialog() != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.SelectedPath))
+            if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.FolderName))
                 return Fail("出力先の選択がキャンセルされました。");
 
-            string root = Path.Combine(dialog.SelectedPath, options.BaseFileName);
+            string root = Path.Combine(dialog.FolderName, options.BaseFileName);
             Directory.CreateDirectory(root);
 
             var paths = new List<string>();
@@ -364,231 +340,3 @@ namespace gironWin.LogReader
             => new() { Success = true, Message = msg, OutputPaths = new List<string> { path } };
     }
 }
-```
-
-***
-
-## 2. `LogExportOptionsDialog.xaml`（新規作成）
-
-```xml
-<!-- src/gironWin.LogReader/LogExportOptionsDialog.xaml -->
-<Window x:Class="gironWin.LogReader.LogExportOptionsDialog"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="エクスポート設定"
-        Height="290" Width="400"
-        WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize">
-    <Grid Margin="16">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-
-        <TextBlock Text="AIサイトHTMLタブ エクスポート"
-                   FontSize="15" FontWeight="Bold" Margin="0,0,0,14"/>
-
-        <StackPanel Grid.Row="1" Margin="0,0,0,12">
-            <TextBlock Text="出力形式" Margin="0,0,0,5"/>
-            <ComboBox x:Name="FormatCombo" SelectedIndex="1">
-                <ComboBoxItem Content="HTML"/>
-                <ComboBoxItem Content="Markdown"/>
-                <ComboBoxItem Content="Text"/>
-            </ComboBox>
-        </StackPanel>
-
-        <StackPanel Grid.Row="2" Margin="0,0,0,12">
-            <TextBlock Text="出力方法" Margin="0,0,0,5"/>
-            <ComboBox x:Name="ModeCombo" SelectedIndex="0">
-                <ComboBoxItem Content="連結して1ファイル"/>
-                <ComboBoxItem Content="ターンごとに個別ファイル"/>
-            </ComboBox>
-        </StackPanel>
-
-        <StackPanel Grid.Row="3">
-            <CheckBox x:Name="MetaCheck"
-                      IsChecked="True"
-                      Content="日時・方向・要約などのメタ情報を含める"
-                      Margin="0,0,0,8"/>
-            <CheckBox x:Name="SnapCheck"
-                      IsChecked="True"
-                      Content="保存済み HTML スナップショットを優先する"/>
-        </StackPanel>
-
-        <StackPanel Grid.Row="4" Orientation="Horizontal"
-                    HorizontalAlignment="Right" Margin="0,14,0,0">
-            <Button Content="キャンセル" Width="88" Margin="0,0,8,0" IsCancel="True"/>
-            <Button Content="エクスポート" Width="88" IsDefault="True"
-                    Click="OkButton_Click"/>
-        </StackPanel>
-    </Grid>
-</Window>
-```
-
-***
-
-## 3. `LogExportOptionsDialog.xaml.cs`（新規作成）
-
-```csharp
-// src/gironWin.LogReader/LogExportOptionsDialog.xaml.cs
-using System.Windows;
-using System.Windows.Controls;
-
-namespace gironWin.LogReader
-{
-    public partial class LogExportOptionsDialog : Window
-    {
-        public LogExportOptions? Options { get; private set; }
-
-        public LogExportOptionsDialog()
-        {
-            InitializeComponent();
-        }
-
-        private void OkButton_Click(object sender, RoutedEventArgs e)
-        {
-            var fmt = (FormatCombo.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Markdown";
-            var mod = (ModeCombo.SelectedItem  as ComboBoxItem)?.Content?.ToString() ?? "連結して1ファイル";
-
-            Options = new LogExportOptions
-            {
-                Format             = fmt switch { "HTML" => LogExportFormat.Html, "Text" => LogExportFormat.Text, _ => LogExportFormat.Markdown },
-                Mode               = mod.Contains("個別") ? LogExportMode.Separate : LogExportMode.Combined,
-                IncludeMetadata    = MetaCheck.IsChecked  == true,
-                PreferHtmlSnapshot = SnapCheck.IsChecked  == true
-            };
-
-            DialogResult = true;
-        }
-    }
-}
-```
-
-***
-
-## 4. `MainWindow.xaml`（ヘッダーにボタンを追加）
-
-現在の `DockPanel` の右端チェックボックス群の**直前**（`DebugToggle` の前）に、以下のボタンを**1行追加**するだけです。
-
-```xml
-<!-- ★ここを追加: DebugToggle の直前に挿入 -->
-<Button DockPanel.Dock="Right"
-        Content="📤 エクスポート"
-        Width="110"
-        Margin="8,0,0,0"
-        VerticalAlignment="Center"
-        Click="ExportButton_Click"/>
-```
-
-追加後のヘッダー `DockPanel` は次のようになります。
-
-```xml
-<DockPanel Grid.Row="0" Grid.ColumnSpan="2"
-           LastChildFill="False"
-           Margin="0,0,0,10">
-
-    <!-- ★追加 -->
-    <Button DockPanel.Dock="Right"
-            Content="📤 エクスポート"
-            Width="110"
-            Margin="8,0,0,0"
-            VerticalAlignment="Center"
-            Click="ExportButton_Click"/>
-
-    <CheckBox x:Name="DebugToggle"
-              DockPanel.Dock="Right"
-              Content="🔍 デバッグ"
-              IsChecked="False"
-              VerticalAlignment="Center"
-              Margin="16,0,0,0"
-              Checked="DebugToggle_Changed"
-              Unchecked="DebugToggle_Changed"/>
-    <CheckBox x:Name="MathToggle"
-              DockPanel.Dock="Right"
-              Content="📐 数式ON"
-              IsChecked="True"
-              VerticalAlignment="Center"
-              Margin="0,0,0,0"
-              Checked="MathToggle_Changed"
-              Unchecked="MathToggle_Changed"/>
-
-    <Button x:Name="PrevButton" Content="← 前へ"
-            Width="80" Margin="0,0,4,0" Click="PrevButton_Click"/>
-    <TextBlock x:Name="PageInfoLabel"
-               VerticalAlignment="Center" Foreground="Gray" Margin="0,0,8,0"/>
-    <Button x:Name="NextButton" Content="次へ →"
-            Width="80" Margin="0,0,12,0" Click="NextButton_Click"/>
-    <TextBlock x:Name="HeaderTurnLabel"
-               FontWeight="Bold" FontSize="17"
-               VerticalAlignment="Center" Margin="0,0,8,0"/>
-    <TextBlock x:Name="HeaderDirectionLabel"
-               VerticalAlignment="Center" Foreground="Gray" Margin="0,0,8,0"/>
-    <TextBlock x:Name="HeaderTimestampLabel"
-               VerticalAlignment="Center"
-               FontSize="11" Foreground="Gray" Margin="0,0,16,0"/>
-</DockPanel>
-```
-
-***
-
-## 5. `MainWindow.xaml.cs`（末尾にメソッドを追加）
-
-既存コードの `DebugToggle_Changed` メソッドの**直後、クラス閉じ括弧 `}` の前**に以下を追加してください。
-
-```csharp
-// ─── エクスポート ─────────────────────────────────────────────
-private readonly ExportService _exportService = new();
-
-private void ExportButton_Click(object sender, RoutedEventArgs e)
-{
-    if (_records.Count == 0)
-    {
-        MessageBox.Show(
-            "表示中のログがありません。",
-            "エクスポート",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
-        return;
-    }
-
-    var dlg = new LogExportOptionsDialog { Owner = this };
-    if (dlg.ShowDialog() != true || dlg.Options == null)
-        return;
-
-    LogExportResult result;
-    try
-    {
-        result = _exportService.Export(_records, dlg.Options);
-    }
-    catch (Exception ex)
-    {
-        MessageBox.Show(
-            $"エクスポート中にエラーが発生しました。\n{ex.Message}",
-            "エクスポート",
-            MessageBoxButton.OK,
-            MessageBoxImage.Error);
-        return;
-    }
-
-    MessageBox.Show(
-        result.Message,
-        "エクスポート",
-        MessageBoxButton.OK,
-        result.Success ? MessageBoxImage.Information : MessageBoxImage.Warning);
-}
-```
-
-***
-
-## ポイントまとめ
-
-前回のコードが動かなかった根本原因は次の通りです。
-
-- ログリーダーは `gironWin.LogReader` という**独立したプロジェクト**
-- ログ一覧は `private List<TransferRecord> _records` というフィールドに直接持っている
-- 今回のコードは `_records` を直接参照するため、「ログがありません」は**絶対に出ない**
-
-`ExportService.cs` と2つのダイアログファイルを `src/gironWin.LogReader/` に置き、`MainWindow.xaml/.cs` に上記の差分を足すだけで完成します。

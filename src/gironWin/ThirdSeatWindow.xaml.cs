@@ -11,11 +11,11 @@ namespace gironWin
             InitializeComponent();
             _request = request;
 
-            TurnLabel.Text   = request.TurnNumber.ToString();
-            RoleLabel.Text   = request.Role;
-            ContextLabel.Text = string.IsNullOrWhiteSpace(request.Context)
+            TurnLabel.Text   = request.DisplayName;
+            RoleLabel.Text   = request.Role.ToString();
+            ContextLabel.Text = string.IsNullOrWhiteSpace(request.Summary)
                 ? "(\u30b3\u30f3\u30c6\u30ad\u30b9\u30c8\u306a\u3057)"
-                : request.Context;
+                : request.Summary;
 
             InputTextBox.Focus();
         }
@@ -24,13 +24,13 @@ namespace gironWin
         {
             string text = InputTextBox.Text.Trim();
             if (string.IsNullOrWhiteSpace(text)) return;
-            _request.OnSubmit?.Invoke(text);
+            _request.OnInputReady?.Invoke(text);
             Close();
         }
 
         private void SkipButton_Click(object sender, RoutedEventArgs e)
         {
-            _request.OnSubmit?.Invoke(string.Empty);
+            _request.OnInputReady?.Invoke(string.Empty);
             Close();
         }
     }

@@ -1,0 +1,49 @@
+<Window x:Class="gironWin.ModeratorSummaryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="司会サマリー" Height="520" Width="660"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="🗂 司会サマリー"
+                   FontWeight="Bold" FontSize="15" Margin="0,0,0,10"/>
+
+        <!-- セクション選択タブ -->
+        <TabControl x:Name="SummaryTabControl" Grid.Row="1" Grid.RowSpan="2" Margin="0,0,0,10">
+            <TabItem Header="論点整理">
+                <TextBox x:Name="IssuesBox" IsReadOnly="True"
+                         TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                         Padding="6" Background="#FAFAFA"/>
+            </TabItem>
+            <TabItem Header="合意点">
+                <TextBox x:Name="AgreementsBox" IsReadOnly="True"
+                         TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                         Padding="6" Background="#E8F5E9"/>
+            </TabItem>
+            <TabItem Header="対立点">
+                <TextBox x:Name="DisagreementsBox" IsReadOnly="True"
+                         TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                         Padding="6" Background="#FFEBEE"/>
+            </TabItem>
+            <TabItem Header="全文">
+                <TextBox x:Name="FullTextBox" IsReadOnly="True"
+                         TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                         Padding="6" Background="#FAFAFA"/>
+            </TabItem>
+        </TabControl>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal"
+                    HorizontalAlignment="Right">
+            <Button Content="📋 クリップボードにコピー" Width="180"
+                    Click="CopyButton_Click" Padding="6,4" Margin="0,0,8,0"/>
+            <Button Content="閉じる" Width="80" IsCancel="True"
+                    Click="CloseButton_Click" Padding="6,4"/>
+        </StackPanel>
+    </Grid>
+</Window>

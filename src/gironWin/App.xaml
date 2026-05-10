@@ -4,6 +4,280 @@
              xmlns:local="clr-namespace:gironWin"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
+
+        <!-- ══════════════════════════════════════════════════
+             BLUE-STEEL LIGHT THEME — gironWin
+             背景: ライトグレー / アクセント: 濃青 / 文字: ほぼ黒
+             WPFデフォルトテンプレートと安全に共存するパレット
+             ══════════════════════════════════════════════════ -->
+
+        <!-- 既存コンバーター（必須） -->
         <local:BoolToVisibilityConverter x:Key="BoolToVisConverter"/>
+
+        <!-- ── カラートークン ── -->
+
+        <!-- 背景系 -->
+        <SolidColorBrush x:Key="BgBrush"           Color="#F0F4F8"/>  <!-- ページ背景 -->
+        <SolidColorBrush x:Key="SurfaceBrush"       Color="#FFFFFF"/>  <!-- パネル面 -->
+        <SolidColorBrush x:Key="Surface2Brush"      Color="#E8EEF5"/>  <!-- 凹んだ面・入力欄 -->
+        <SolidColorBrush x:Key="BorderBrush"        Color="#B0C4D8"/>  <!-- ボーダー -->
+
+        <!-- アクセント（青） -->
+        <SolidColorBrush x:Key="AccentBrush"        Color="#1565C0"/>  <!-- ボタン・強調 -->
+        <SolidColorBrush x:Key="AccentHoverBrush"   Color="#1976D2"/>  <!-- ホバー -->
+        <SolidColorBrush x:Key="AccentLightBrush"   Color="#BBDEFB"/>  <!-- アクセント薄面 -->
+        <SolidColorBrush x:Key="AccentSubtleBrush"  Color="#E3F0FC"/>  <!-- 選択背景 -->
+
+        <!-- テキスト -->
+        <SolidColorBrush x:Key="TextPrimaryBrush"   Color="#1A2733"/>  <!-- 主テキスト（ほぼ黒） -->
+        <SolidColorBrush x:Key="TextMutedBrush"     Color="#3D5A73"/>  <!-- 副テキスト -->
+        <SolidColorBrush x:Key="TextFaintBrush"     Color="#7A9BB5"/>  <!-- 薄テキスト -->
+        <SolidColorBrush x:Key="TextOnAccentBrush"  Color="#FFFFFF"/>  <!-- アクセント上の文字 -->
+
+        <!-- ステータス -->
+        <SolidColorBrush x:Key="SuccessBrush"       Color="#1B7A4E"/>
+        <SolidColorBrush x:Key="WarningBrush"       Color="#B45309"/>
+        <SolidColorBrush x:Key="ErrorBrush"         Color="#C62828"/>
+
+        <!-- 席バッジ -->
+        <SolidColorBrush x:Key="LeftSeatBrush"      Color="#1565C0"/>  <!-- 左席：青 -->
+        <SolidColorBrush x:Key="RightSeatBrush"     Color="#006064"/>  <!-- 右席：シアン -->
+        <SolidColorBrush x:Key="HumanSeatBrush"     Color="#6A1B9A"/>  <!-- 人間席：紫 -->
+
+        <!-- フォント -->
+        <FontFamily x:Key="BaseFont">Yu Gothic UI, Meiryo UI, Segoe UI, sans-serif</FontFamily>
+        <FontFamily x:Key="MonoFont">Cascadia Code, Consolas, monospace</FontFamily>
+
+        <!-- ── Window ── -->
+        <Style TargetType="Window">
+            <Setter Property="Background"  Value="{StaticResource BgBrush}"/>
+            <Setter Property="Foreground"  Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="FontFamily"  Value="{StaticResource BaseFont}"/>
+            <Setter Property="FontSize"    Value="13"/>
+        </Style>
+
+        <!-- ── TextBlock ── -->
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="FontFamily" Value="{StaticResource BaseFont}"/>
+        </Style>
+
+        <!-- ── TextBox ── -->
+        <Style TargetType="TextBox">
+            <Setter Property="Background"      Value="{StaticResource Surface2Brush}"/>
+            <Setter Property="Foreground"      Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="BorderBrush"     Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="6,4"/>
+            <Setter Property="FontFamily"      Value="{StaticResource BaseFont}"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="CaretBrush"      Value="{StaticResource AccentBrush}"/>
+            <Style.Triggers>
+                <Trigger Property="IsFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="Background"  Value="#FFFFFF"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- ── Button 基本（枠線あり・ライト） ── -->
+        <Style TargetType="Button">
+            <Setter Property="Background"      Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="Foreground"      Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="BorderBrush"     Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="10,5"/>
+            <Setter Property="FontFamily"      Value="{StaticResource BaseFont}"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{StaticResource AccentSubtleBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush"
+                                        Value="{StaticResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{StaticResource AccentLightBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── PrimaryButton（塗りつぶし青・白文字） ── -->
+        <Style x:Key="PrimaryButton" TargetType="Button"
+               BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background"  Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Foreground"  Value="{StaticResource TextOnAccentBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="FontWeight"  Value="SemiBold"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{StaticResource AccentHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#0D47A1"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── DangerButton（赤・白文字） ── -->
+        <Style x:Key="DangerButton" TargetType="Button"
+               BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background"  Value="#C62828"/>
+            <Setter Property="Foreground"  Value="White"/>
+            <Setter Property="BorderBrush" Value="#B71C1C"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#D32F2F"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── GroupBox ── -->
+        <Style TargetType="GroupBox">
+            <Setter Property="BorderBrush"     Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground"      Value="{StaticResource TextMutedBrush}"/>
+            <Setter Property="FontFamily"      Value="{StaticResource BaseFont}"/>
+            <Setter Property="FontSize"        Value="11"/>
+            <Setter Property="Padding"         Value="6,4"/>
+        </Style>
+
+        <!-- ── TabItem ── -->
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}"/>
+            <Setter Property="Padding"    Value="10,4"/>
+            <Setter Property="FontFamily" Value="{StaticResource BaseFont}"/>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- ── ListBox ── -->
+        <Style TargetType="ListBox">
+            <Setter Property="Background"  Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="Foreground"  Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="FontFamily"  Value="{StaticResource BaseFont}"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+        </Style>
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{StaticResource AccentSubtleBrush}"/>
+                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                </Trigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{StaticResource AccentSubtleBrush}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- ── DataGrid ── -->
+        <Style TargetType="DataGrid">
+            <Setter Property="Background"               Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="Foreground"               Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="BorderBrush"              Value="{StaticResource BorderBrush}"/>
+            <Setter Property="GridLinesVisibility"      Value="Horizontal"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="RowBackground"            Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="AlternatingRowBackground" Value="{StaticResource Surface2Brush}"/>
+            <Setter Property="FontFamily"               Value="{StaticResource BaseFont}"/>
+            <Setter Property="FontSize"                 Value="13"/>
+        </Style>
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background"      Value="{StaticResource Surface2Brush}"/>
+            <Setter Property="Foreground"      Value="{StaticResource TextMutedBrush}"/>
+            <Setter Property="Padding"         Value="8,4"/>
+            <Setter Property="FontWeight"      Value="SemiBold"/>
+            <Setter Property="BorderBrush"     Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+        </Style>
+
+        <!-- ── ToolTip ── -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Background"      Value="{StaticResource Surface2Brush}"/>
+            <Setter Property="Foreground"      Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="BorderBrush"     Value="{StaticResource AccentBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="6,4"/>
+            <Setter Property="FontFamily"      Value="{StaticResource BaseFont}"/>
+        </Style>
+
+        <!-- ── ProgressBar ── -->
+        <Style TargetType="ProgressBar">
+            <Setter Property="Background" Value="{StaticResource Surface2Brush}"/>
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Height"     Value="5"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+        </Style>
+
+        <!-- ── Separator ── -->
+        <Style TargetType="Separator">
+            <Setter Property="Background" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="Margin"     Value="0,2"/>
+        </Style>
+
     </Application.Resources>
 </Application>
