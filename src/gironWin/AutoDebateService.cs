@@ -11,7 +11,7 @@ namespace gironWin
 
     /// <summary>
     /// Phase 3-5: 第3席・TurnPolicy・ResearchMode 対応 AutoDebateService
-    /// MaxTurns = 往復カウント（右が返答した時点で1往復）
+    /// MaxTurns = 左右それぞれの発言回数（左N回・右N回で終了）
     /// </summary>
     public sealed class AutoDebateService
     {
@@ -34,7 +34,7 @@ namespace gironWin
         public SummaryService  SummaryService  => _summaryService;
 
         public event EventHandler<string>? StatusChanged;
-        /// <summary>往復カウント(roundCount)を通知する</summary>
+        /// <summary>左右各カウントの小さい方（進捗表示用）を通知する</summary>
         public event EventHandler<int>?    TurnAdvanced;
         public event EventHandler?         DebateStopped;
         public event EventHandler<ThirdSeatInputRequest>? ThirdSeatInputRequired;
@@ -105,9 +105,12 @@ namespace gironWin
             NotifyStatus("自動討論を開始します。");
 
             // turn       = 送信総回数（左右・第3席 全部合計）
-            // roundCount = 往復カウント（右→左完了で +1、MaxTurns 判定に使用）
+            // leftCount  = 左席の発言回数（左→右 完了で +1）
+            // rightCount = 右席の発言回数（右→左 完了で +1）
+            // 終了条件: leftCount >= MaxTurns && rightCount >= MaxTurns
             int turn       = 0;
-            int roundCount = 0;
+            int leftCount  = 0;
+            int rightCount = 0;
 
             int phaseIndex = 0;
             DebateDirection direction = DebateDirection.LeftToRight;
@@ -120,7 +123,7 @@ namespace gironWin
             int consecutiveFailCount = 0;
             const int MaxConsecutiveFail = 3;
 
-            DebugLog($"[RunLoop] 開始 MaxTurns={config.MaxTurns} TurnPolicy={config.TurnPolicy}");
+            DebugLog($"[RunLoop] 開始 MaxTurns={config.MaxTurns} TurnPolicy={config.TurnPolicy} (左右それぞれ{config.MaxTurns}回発言で終了)");
 
             try
             {
@@ -139,11 +142,11 @@ namespace gironWin
                     direction = ResolveDirection(config.TurnPolicy, direction, turn, phaseIndex);
                     bool isLeftTurn = direction == DebateDirection.LeftToRight;
 
-                    // 第3席を挟むか判定（第3席は roundCount に影響しない）
+                    // 第3席を挑むか判定（第3席は leftCount/rightCount に影響しない）
                     bool isThirdTurn = ShouldInsertThirdSeat(config.ThirdSeat, turn);
                     if (isThirdTurn)
                     {
-                        DebugLog($"[Turn {turn}] 第3席ターン (roundCount={roundCount} 変化なし)");
+                        DebugLog($"[Turn {turn}] 第3席ターン (leftCount={leftCount} rightCount={rightCount} 変化なし)");
                         bool ok = await RunThirdSeatTurnAsync(config, turnRecords, turn, ct);
                         if (!ok) break;
                         phaseIndex++;
@@ -151,7 +154,7 @@ namespace gironWin
                         continue;
                     }
 
-                    DebugLog($"[Turn {turn}] 開始 direction={direction} isLeftTurn={isLeftTurn} roundCount={roundCount} phaseIndex={phaseIndex}");
+                    DebugLog($"[Turn {turn}] 開始 direction={direction} isLeftTurn={isLeftTurn} leftCount={leftCount} rightCount={rightCount} phaseIndex={phaseIndex}");
 
                     // 通常ターン
                     var srcWebView  = isLeftTurn ? config.LeftWebView  : config.RightWebView;
@@ -286,23 +289,29 @@ namespace gironWin
                     turnRecords.Add(rec);
                     await _sessionRepository.AppendAsync(rec);
 
-                    // ★ 往復カウント: 右→左（右席の返答）完了時に +1
-                    if (!isLeftTurn)
+                    // ★ 左右個別に発言回数をカウント
+                    if (isLeftTurn)
                     {
-                        roundCount++;
-                        TurnAdvanced?.Invoke(this, roundCount); // UI に往復数を通知
-                        DebugLog($"[Turn {turn}] 右→左 完了 → roundCount={roundCount} / MaxTurns={config.MaxTurns}");
-
-                        if (config.MaxTurns > 0 && roundCount >= config.MaxTurns)
-                        {
-                            NotifyStatus($"設定往復数 {config.MaxTurns} 往復に到達。討論終了。");
-                            DebugLog($"[RunLoop] MaxTurns 到達: roundCount={roundCount} >= MaxTurns={config.MaxTurns} → 終了");
-                            break;
-                        }
+                        leftCount++;
+                        DebugLog($"[Turn {turn}] 左→右 完了 → leftCount={leftCount} / MaxTurns={config.MaxTurns}");
                     }
                     else
                     {
-                        DebugLog($"[Turn {turn}] 左→右 完了 (roundCount={roundCount} まだカウントしない)");
+                        rightCount++;
+                        DebugLog($"[Turn {turn}] 右→左 完了 → rightCount={rightCount} / MaxTurns={config.MaxTurns}");
+                    }
+
+                    // 進捗を UI に通知（小さい方のカウントを表示）
+                    TurnAdvanced?.Invoke(this, Math.Min(leftCount, rightCount));
+
+                    // ★ 左右両方が MaxTurns に達したら終了
+                    if (config.MaxTurns > 0
+                        && leftCount  >= config.MaxTurns
+                        && rightCount >= config.MaxTurns)
+                    {
+                        NotifyStatus($"左右各 {config.MaxTurns} 回発言に到達。討論終了。");
+                        DebugLog($"[RunLoop] MaxTurns 到達: leftCount={leftCount} rightCount={rightCount} >= MaxTurns={config.MaxTurns} → 終了");
+                        break;
                     }
 
                     NotifyStatus($"ターン {turn}: 送信完了。");
@@ -322,7 +331,7 @@ namespace gironWin
             }
             finally
             {
-                DebugLog($"[RunLoop] 終了 turn={turn} roundCount={roundCount} MaxTurns={config.MaxTurns}");
+                DebugLog($"[RunLoop] 終了 turn={turn} leftCount={leftCount} rightCount={rightCount} MaxTurns={config.MaxTurns}");
                 _cts      = null;
                 _isPaused = false;
                 _pauseTcs = null;
