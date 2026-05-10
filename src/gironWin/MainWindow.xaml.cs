@@ -36,9 +36,11 @@ namespace gironWin
             InitializeComponent();
             TurnLogListBox.ItemsSource = _turnRecords;
 
-            // デバッグウィンドウを事前作成（ログを討論開始前からためる）
+            // Owner はここで設定しない。
+            // MainWindow がまだ表示されていないため、
+            // Owner を設定すると InvalidOperationException になる。
+            // 初回表示時に OpenDebugLogWindow() 内で遅延設定する。
             _debugLogWindow = new DebugLogWindow();
-            _debugLogWindow.Owner = this;
         }
 
         // ---------------------------------------------------------------
@@ -115,6 +117,11 @@ namespace gironWin
 
         private void OpenDebugLogWindow()
         {
+            // ★ Owner を初回表示時に遅延設定する
+            // （MainWindow が表示済みのときのみ有効。設定済みなら再度設定不要）
+            if (_debugLogWindow.Owner == null && IsLoaded)
+                _debugLogWindow.Owner = this;
+
             _debugLogWindow.Show();
             _debugLogWindow.Activate();
         }
@@ -269,13 +276,12 @@ namespace gironWin
             _debateService.ThirdSeatInputRequired    += DebateService_ThirdSeatInputRequired;
             _debateService.ResearchTagsExtracted     += DebateService_ResearchTagsExtracted;
 
-            // ★ デバッグログを DebugLogWindow に转送
+            // ★ デバッグログを DebugLogWindow に転送
             _debateService.DebugLogEmitted += (_, msg) => _debugLogWindow.AppendLog(msg);
 
             _approvalQueue.ApprovalRequested += ApprovalQueue_ApprovalRequested;
 
             _turnRecords.Clear();
-            // ★ デバッグウィンドウをクリアして開始を通知
             _debugLogWindow.AppendLog($"[{DateTime.Now:HH:mm:ss.fff}] ===== 討論開始 ===== MaxTurns={MaxTurnsTextBox.Text}");
 
             var config = BuildConfig();
@@ -386,7 +392,6 @@ namespace gironWin
         private void DebateService_StatusChanged(object? sender, string msg)
             => Dispatcher.Invoke(() => SetStatus(msg));
 
-        /// <summary>TurnAdvanced は往復カウント(roundCount)を通知する</summary>
         private void DebateService_TurnAdvanced(object? sender, int roundCount)
             => Dispatcher.Invoke(() => TurnCountLabel.Text = $"往復: {roundCount}");
 
@@ -413,7 +418,7 @@ namespace gironWin
             {
                 if (_debateService == null) return;
                 int total = _debateService.ResearchService.Entries.Count;
-                ResearchTagCountLabel.Text  = $"🔬 タグ: {total}";
+                ResearchTagCountLabel.Text   = $"🔬 タグ: {total}";
                 ResearchNoteButton.IsEnabled = true;
                 MenuResearchNote.IsEnabled   = true;
                 SetStatus($"研究タグ {tags.Count} 件を抽出しました（合計 {total} 件）");
