@@ -21,13 +21,17 @@ namespace gironWin
         private readonly LogRepository _logRepository;
 
         private CancellationTokenSource? _cts;
+        private TaskCompletionSource<bool>? _runCompletion;
+        private bool _isStopping;
         private bool _isPaused;
         private TaskCompletionSource<bool>? _pauseTcs;
 
         // HumanPriority 入力待機用
         private TaskCompletionSource<string?>? _humanInputTcs;
 
-        public bool IsRunning => _cts != null && !_cts.IsCancellationRequested;
+        public bool IsRunning => _runCompletion != null && !_runCompletion.Task.IsCompleted;
+        public bool IsStopping => _isStopping;
+        public Task Completion => _runCompletion?.Task ?? Task.CompletedTask;
         public bool IsPaused => _isPaused;
 
         public ResearchModeService ResearchService => _researchService;
@@ -67,28 +71,74 @@ namespace gironWin
         public void Start(AutoDebateConfig config)
         {
             if (IsRunning) return;
-            _cts = new CancellationTokenSource();
+            var cts = new CancellationTokenSource();
+            var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _cts = cts;
+            _runCompletion = completion;
+            _isStopping = false;
             _isPaused = false;
             _pauseTcs = null;
             _humanInputTcs = null;
-            _ = RunLoopAsync(config, _cts.Token);
+            _ = ExecuteRunAsync(config, cts, completion);
         }
 
         public void Stop()
         {
-            _cts?.Cancel();
-            _cts = null;
-            _isPaused = false;
-            _pauseTcs?.TrySetResult(true);
-            _humanInputTcs?.TrySetResult(null);
-            _humanInputTcs = null;
-            NotifyStatus("討論を停止しました。");
-            DebateStopped?.Invoke(this, EventArgs.Empty);
+            var cts = _cts;
+            if (!IsRunning || cts == null || _isStopping) return;
+            _isStopping = true;
+            // Cancellation requests termination; it does not mark the run complete.
+            try { cts.Cancel(); }
+            finally
+            {
+                _isPaused = false;
+                _pauseTcs?.TrySetResult(true);
+                _humanInputTcs?.TrySetResult(null);
+            }
+        }
+
+        public Task StopAsync()
+        {
+            Task completion = Completion;
+            Stop();
+            return completion;
+        }
+
+        private async Task ExecuteRunAsync(AutoDebateConfig config,
+            CancellationTokenSource cts, TaskCompletionSource<bool> completion)
+        {
+            try
+            {
+                await RunLoopAsync(config, cts.Token);
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+            catch (Exception ex)
+            {
+                try { AppLogger.Error(LogCategory.RunLoop, "討論処理でエラーが発生しました。", ex); }
+                catch { System.Diagnostics.Debug.WriteLine(ex); }
+            }
+            finally
+            {
+                _isPaused = false;
+                _pauseTcs?.TrySetResult(true);
+                _humanInputTcs?.TrySetResult(null);
+                _pauseTcs = null;
+                _humanInputTcs = null;
+                if (ReferenceEquals(_cts, cts)) _cts = null;
+                cts.Dispose();
+                try { NotifyStatus("自動討論終了。"); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex); }
+                try { DebateStopped?.Invoke(this, EventArgs.Empty); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex); }
+                _isStopping = false;
+                // Remain running until cleanup and completion notifications finish.
+                completion.TrySetResult(true);
+            }
         }
 
         public void Pause()
         {
-            if (!IsRunning || _isPaused) return;
+            if (!IsRunning || IsStopping || _isPaused) return;
             _isPaused = true;
             _pauseTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             NotifyStatus("一時停止中...");
@@ -96,7 +146,7 @@ namespace gironWin
 
         public void Resume()
         {
-            if (!_isPaused) return;
+            if (!IsRunning || IsStopping || !_isPaused) return;
             _isPaused = false;
             _pauseTcs?.TrySetResult(true);
             _pauseTcs = null;
@@ -122,6 +172,7 @@ namespace gironWin
             NotifyStatus("自動討論を開始します。");
             int turn = 1;
             int phaseIndex = 0;
+            var thirdSeatHandledTurns = new HashSet<int>();
             DebateDirection direction = DebateDirection.LeftToRight;
 
             string leftSnapshot = string.Empty;
@@ -160,8 +211,11 @@ namespace gironWin
                             if (tgtAdapter != null)
                             {
                                 NotifyStatus($"[Turn {turn}] 人間発言を {tgtAdapter.SiteName} へ送信中…");
+                                ct.ThrowIfCancellationRequested();
                                 await tgtAdapter.SetInputAsync(tgtWebView, humanText);
+                                ct.ThrowIfCancellationRequested();
                                 await tgtAdapter.SendAsync(tgtWebView);
+                                ct.ThrowIfCancellationRequested();
 
                                 turnRecords.Add(new TransferRecord
                                 {
@@ -187,13 +241,14 @@ namespace gironWin
                     direction = ResolveDirection(config.TurnPolicy, direction, turn, phaseIndex);
 
                     // 第3席を挿むか判定
-                    bool isThirdTurn = ShouldInsertThirdSeat(config.ThirdSeat, turn);
+                    bool isThirdTurn = ShouldInsertThirdSeat(config.ThirdSeat, turn)
+                        && thirdSeatHandledTurns.Add(turn);
                     if (isThirdTurn)
                     {
                         bool ok = await RunThirdSeatTurnAsync(config, turnRecords, ct);
                         if (!ok) break;
-                        phaseIndex++;
-                        continue;
+                        ct.ThrowIfCancellationRequested();
+                        // Continue the same ordinary turn without consuming its phase.
                     }
 
                     // 通常ターン
@@ -231,6 +286,7 @@ namespace gironWin
                             break;
                         }
 
+                        ct.ThrowIfCancellationRequested();
                         bool sendOk = await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                             srcAdapter.SendAsync(srcWebView)
                         ).Task.Unwrap();
@@ -445,9 +501,11 @@ namespace gironWin
                                 await Task.Delay(2000, ct);
                             }
 
+                            ct.ThrowIfCancellationRequested();
                             transferResult = await _transferService.TransferAsync(
                                 srcWebView, tgtWebView2, srcUrl, tgtUrl2,
                                 submit: true, appendBridge: false, manualText: transferText);
+                            ct.ThrowIfCancellationRequested();
 
                             if (!transferResult.Success)
                             {
@@ -548,14 +606,9 @@ namespace gironWin
                     await Task.Delay(config.TurnIntervalMs, ct);
                 }
             }
-            finally
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                _cts = null;
-                _isPaused = false;
-                _pauseTcs = null;
-                _humanInputTcs = null;
-                DebateStopped?.Invoke(this, EventArgs.Empty);
-                NotifyStatus("自動討論終了。");
+                // ExecuteRunAsync owns final cleanup and the single stopped event.
             }
         }
 
@@ -564,38 +617,40 @@ namespace gironWin
         // ---------------------------------------------------------------
 
         private async Task<string?> WaitForHumanPriorityAsync(
-            AutoDebateConfig config,
-            List<TransferRecord> records,
-            int turn,
-            CancellationToken ct)
+            AutoDebateConfig config, List<TransferRecord> records, int turn, CancellationToken ct)
         {
-            _humanInputTcs = new TaskCompletionSource<string?>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-
-            string context = _summaryService.BuildModeratorSummary(records);
-            HumanPriorityInputRequired?.Invoke(this, new HumanPriorityInputRequest
-            {
-                Summary = context,
-                DisplayName = "HumanPriority",
-                TimeoutMs = config.HumanPriorityTimeoutMs,
-                OnInputReady = text => SubmitHumanPriorityInput(text)
-            });
-
-            NotifyStatus($"[Turn {turn}] 人間割り込み待機 ({config.HumanPriorityTimeoutMs / 1000}秒でスキップ)…");
-
+            var pending = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _humanInputTcs = pending;
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(config.HumanPriorityTimeoutMs);
-
+            var requestToken = timeoutCts.Token;
             try
             {
-                return await _humanInputTcs.Task.WaitAsync(timeoutCts.Token);
+                ct.ThrowIfCancellationRequested();
+                string context = _summaryService.BuildModeratorSummary(records);
+                HumanPriorityInputRequired?.Invoke(this, new HumanPriorityInputRequest
+                {
+                    Summary = context,
+                    DisplayName = "HumanPriority",
+                    TimeoutMs = config.HumanPriorityTimeoutMs,
+                    // Bind the callback to this request, not a future run's field.
+                    OnInputReady = text =>
+                    {
+                        if (!requestToken.IsCancellationRequested && !pending.Task.IsCompleted)
+                            pending.TrySetResult(text);
+                    }
+                });
+                NotifyStatus($"[Turn {turn}] 人間割り込み待機 ({config.HumanPriorityTimeoutMs / 1000}秒でスキップ)…");
+                return await pending.Task.WaitAsync(timeoutCts.Token);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                _humanInputTcs = null;
-                if (ct.IsCancellationRequested) return null;
                 NotifyStatus($"[Turn {turn}] 人間割り込みなし → AI ターンへ");
                 return null;
+            }
+            finally
+            {
+                if (ReferenceEquals(_humanInputTcs, pending)) _humanInputTcs = null;
             }
         }
 
@@ -641,8 +696,11 @@ namespace gironWin
                     ? summary
                     : $"{third.SystemPrompt}\n\n{summary}";
 
+                ct.ThrowIfCancellationRequested();
                 await thirdAdapter.SetInputAsync(third.WebView, prompt);
+                ct.ThrowIfCancellationRequested();
                 await thirdAdapter.SendAsync(third.WebView);
+                ct.ThrowIfCancellationRequested();
 
                 using var monitor = new ConversationMonitor(thirdAdapter, third.WebView);
                 try
@@ -863,3 +921,4 @@ namespace gironWin
         public List<ResearchTagEntry> NewTags { get; init; } = new();
     }
 }
+
