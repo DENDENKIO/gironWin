@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Windows.Threading;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -63,46 +64,260 @@ namespace gironWin.LogReader
                 }
             }
 
-            Loaded += async (s, e) => await InitWebViewAsync();
+            Loaded += Reader_Loaded;
+            MainTabControl.SelectionChanged += ReaderTab_SelectionChanged;
+            Closed += Reader_Closed;
         }
 
-        private async Task InitWebViewAsync()
+        private Task? _bodyInitialization;
+        private Task? _htmlInitialization;
+        private Task? _imagesInitialization;
+        private bool _readerClosing;
+        private bool _bodyLoadFailed;
+        private bool _quoteSending;
+        private long _contentRevision;
+        private long _requestSerial;
+        private long _bodyRenderedRevision = -1;
+        private long _htmlRenderedRevision = -1;
+        private long _imagesRenderedRevision = -1;
+        private long _selectionRevision = -1;
+        private ulong _htmlNavigationId;
+        private ulong _imagesNavigationId;
+        private long _htmlNavigationRevision = -1;
+        private long _imagesNavigationRevision = -1;
+
+        private bool ReaderUnavailable => _readerClosing || _webViewsReleased
+            || Dispatcher.HasShutdownStarted;
+
+        private bool RequestIsCurrent(long request, long revision, object? tab)
+            => !ReaderUnavailable && request == _requestSerial
+                && revision == _contentRevision
+                && ReferenceEquals(MainTabControl.SelectedItem, tab);
+
+        private void Reader_Loaded(object sender, RoutedEventArgs e)
+            => RenderCurrentRecord();
+
+        private void Reader_Closed(object? sender, EventArgs e)
         {
+            _readerClosing = true;
+            _webViewReady = false;
+            _requestSerial++;
+            Loaded -= Reader_Loaded;
+            MainTabControl.SelectionChanged -= ReaderTab_SelectionChanged;
+        }
+
+        private void ReaderTab_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (e.Source != MainTabControl || !IsLoaded || ReaderUnavailable) return;
+            _ = RefreshSelectedTabAsync(++_requestSerial, _contentRevision);
+        }
+
+        private void ClearQuoteSelection()
+        {
+            _selectionRevision = -1;
+            SelectedTextBlock.Text = "（テキストを選択してください）";
+            QuoteRegisterButton.IsEnabled = false;
+        }
+
+        private bool CanReadBodySelection()
+            => !ReaderUnavailable && _webViewReady
+                && _bodyRenderedRevision == _contentRevision
+                && _records.Count > 0 && _currentIndex >= 0 && _currentIndex < _records.Count;
+
+        private bool CanRegisterSelection()
+            => CanReadBodySelection() && !_quoteSending
+                && _selectionRevision == _contentRevision;
+
+        private void SetQuoteSelection(string text, long revision)
+        {
+            if (!CanReadBodySelection() || revision != _contentRevision) return;
+            text = text.Trim();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                ClearQuoteSelection();
+                return;
+            }
+            _selectionRevision = revision;
+            SelectedTextBlock.Text = text;
+            QuoteRegisterButton.IsEnabled = CanRegisterSelection();
+        }
+
+        private async Task InitializeBodyAsync()
+        {
+            await BodyWebView.EnsureCoreWebView2Async();
+            if (ReaderUnavailable) return;
+            string assets = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "WebAssets");
+            if (Directory.Exists(assets))
+                BodyWebView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                    VirtualHost, assets, CoreWebView2HostResourceAccessKind.Allow);
+            var core = BodyWebView.CoreWebView2;
+            core.WebMessageReceived -= CoreWebView2_WebMessageReceived;
+            core.WebMessageReceived += CoreWebView2_WebMessageReceived;
+            core.NavigationStarting -= Body_NavigationStarting;
+            core.NavigationStarting += Body_NavigationStarting;
+            core.DOMContentLoaded -= Body_DOMContentLoaded;
+            core.DOMContentLoaded += Body_DOMContentLoaded;
+            core.NavigationCompleted -= Body_NavigationCompleted;
+            core.NavigationCompleted += Body_NavigationCompleted;
+            NavigateBodyShell();
+        }
+
+        private void NavigateBodyShell()
+        {
+            if (ReaderUnavailable) return;
+            _bodyLoadFailed = false;
+            _webViewReady = false;
+            _bodyRenderedRevision = -1;
+            ClearQuoteSelection();
+            string shell = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "WebAssets", "index.html");
+            if (File.Exists(shell))
+                BodyWebView.CoreWebView2.Navigate($"https://{VirtualHost}/index.html");
+            else
+                BodyWebView.CoreWebView2.NavigateToString(BuildShellHtml());
+        }
+
+        private void Body_NavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+        {
+            if (ReaderUnavailable) return;
+            _webViewReady = false;
+            _bodyRenderedRevision = -1;
+            ClearQuoteSelection();
+        }
+
+        private void Body_DOMContentLoaded(object? sender, CoreWebView2DOMContentLoadedEventArgs e)
+        {
+            if (ReaderUnavailable) return;
+            _webViewReady = true;
+            _bodyLoadFailed = false;
+            _ = RefreshSelectedTabAsync(++_requestSerial, _contentRevision);
+        }
+
+        private void Body_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            if (ReaderUnavailable || e.IsSuccess) return;
+            _webViewReady = false;
+            _bodyLoadFailed = true;
+            _bodyRenderedRevision = -1;
+            ClearQuoteSelection();
+            ReportDisplayFailure("本文ページ", new InvalidOperationException(e.WebErrorStatus.ToString()));
+        }
+
+        private void Html_NavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+            => _htmlNavigationId = e.NavigationId;
+
+        private void Images_NavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+            => _imagesNavigationId = e.NavigationId;
+
+        private void Html_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            if (ReaderUnavailable || e.IsSuccess || e.NavigationId != _htmlNavigationId
+                || _htmlNavigationRevision != _contentRevision) return;
+            _htmlRenderedRevision = -1;
+            if (ReferenceEquals(MainTabControl.SelectedItem, AiHtmlTab))
+                ReportDisplayFailure("AIサイトHTML", new InvalidOperationException(e.WebErrorStatus.ToString()));
+        }
+
+        private void Images_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            if (ReaderUnavailable || e.IsSuccess || e.NavigationId != _imagesNavigationId
+                || _imagesNavigationRevision != _contentRevision) return;
+            _imagesRenderedRevision = -1;
+            if (ReferenceEquals(MainTabControl.SelectedItem, ImageListTab))
+                ReportDisplayFailure("画像一覧", new InvalidOperationException(e.WebErrorStatus.ToString()));
+        }
+
+        private void ReportDisplayFailure(string area, Exception ex)
+        {
+            if (ReaderUnavailable) return;
+            System.Diagnostics.Debug.WriteLine($"[LogReader/{area}] {ex}");
+            QuoteStatusLabel.Text = $"{area}の表示に失敗しました。タブを選び直すと再試行します。";
+        }
+
+        private async Task RefreshSelectedTabAsync(long request, long revision)
+        {
+            object? tab = MainTabControl.SelectedItem;
             try
             {
-                await BodyWebView.EnsureCoreWebView2Async();
-                await AiHtmlWebView.EnsureCoreWebView2Async();
-                await ImageListWebView.EnsureCoreWebView2Async();  // ★追加
+                await System.Windows.Threading.Dispatcher.Yield(DispatcherPriority.Loaded);
+                if (!RequestIsCurrent(request, revision, tab)) return;
+                var record = _records.Count > 0 && _currentIndex >= 0 && _currentIndex < _records.Count
+                    ? _records[_currentIndex] : null;
+                bool hasHtml = record != null && !string.IsNullOrEmpty(record.HtmlSnapshotPath)
+                    && File.Exists(record.HtmlSnapshotPath);
 
-                string exeDir      = Path.GetDirectoryName(
-                                         Assembly.GetExecutingAssembly().Location)!;
-                string assetsDir   = Path.Combine(exeDir, "WebAssets");
-
-                if (Directory.Exists(assetsDir))
+                if (ReferenceEquals(tab, AiHtmlTab))
                 {
-                    BodyWebView.CoreWebView2.SetVirtualHostNameToFolderMapping(
-                        VirtualHost,
-                        assetsDir,
-                        CoreWebView2HostResourceAccessKind.Allow);
+                    if (_htmlRenderedRevision == revision) return;
+                    AiHtmlWebView.Visibility = hasHtml ? Visibility.Visible : Visibility.Collapsed;
+                    NoAiHtmlLabel.Visibility = hasHtml ? Visibility.Collapsed : Visibility.Visible;
+                    if (!hasHtml) { _htmlRenderedRevision = revision; return; }
+                    if (_htmlInitialization == null || _htmlInitialization.IsFaulted)
+                        _htmlInitialization = AiHtmlWebView.EnsureCoreWebView2Async();
+                    await _htmlInitialization;
+                    if (!RequestIsCurrent(request, revision, tab)) return;
+                    string path = record!.HtmlSnapshotPath!;
+                    string html = ResolveKatexSpans(File.ReadAllText(path, Encoding.UTF8));
+                    string baseUri = new Uri(Path.GetDirectoryName(Path.GetFullPath(path))!
+                        + Path.DirectorySeparatorChar).AbsoluteUri;
+                    string baseTag = "<base href=\"" + System.Net.WebUtility.HtmlEncode(baseUri) + "\">";
+                    var head = System.Text.RegularExpressions.Regex.Match(html,
+                        @"<head\b[^>]*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    html = head.Success ? html.Insert(head.Index + head.Length, baseTag) : baseTag + html;
+                    var htmlCore = AiHtmlWebView.CoreWebView2;
+                    htmlCore.NavigationStarting -= Html_NavigationStarting;
+                    htmlCore.NavigationStarting += Html_NavigationStarting;
+                    htmlCore.NavigationCompleted -= Html_NavigationCompleted;
+                    htmlCore.NavigationCompleted += Html_NavigationCompleted;
+                    _htmlNavigationRevision = revision;
+                    htmlCore.NavigateToString(html);
+                    _htmlRenderedRevision = revision;
                 }
-
-                BodyWebView.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
-
-                BodyWebView.CoreWebView2.DOMContentLoaded += (_, _) =>
+                else if (ReferenceEquals(tab, ImageListTab))
                 {
-                    _webViewReady = true;
-                    Dispatcher.Invoke(RenderCurrentRecord);
-                };
-
-                string shellPath = Path.Combine(assetsDir, "index.html");
-                if (File.Exists(shellPath))
-                    BodyWebView.CoreWebView2.Navigate($"https://{VirtualHost}/index.html");
-                else
-                    BodyWebView.CoreWebView2.NavigateToString(BuildShellHtml());
+                    if (_imagesRenderedRevision == revision) return;
+                    if (!hasHtml)
+                    {
+                        ImageListWebView.Visibility = Visibility.Collapsed;
+                        NoImageLabel.Visibility = Visibility.Visible;
+                        ImageCountLabel.Text = "画像なし";
+                        _imagesRenderedRevision = revision;
+                        return;
+                    }
+                    ImageListWebView.Visibility = Visibility.Visible;
+                    if (_imagesInitialization == null || _imagesInitialization.IsFaulted)
+                        _imagesInitialization = ImageListWebView.EnsureCoreWebView2Async();
+                    await _imagesInitialization;
+                    if (!RequestIsCurrent(request, revision, tab)) return;
+                    var imagesCore = ImageListWebView.CoreWebView2;
+                    imagesCore.NavigationStarting -= Images_NavigationStarting;
+                    imagesCore.NavigationStarting += Images_NavigationStarting;
+                    imagesCore.NavigationCompleted -= Images_NavigationCompleted;
+                    imagesCore.NavigationCompleted += Images_NavigationCompleted;
+                    _imagesNavigationRevision = revision;
+                    if (RenderImageList(record!.HtmlSnapshotPath!))
+                        _imagesRenderedRevision = revision;
+                }
+                else if (MainTabControl.SelectedIndex == 0)
+                {
+                    if (_bodyRenderedRevision == revision && _webViewReady) return;
+                    if (_bodyInitialization == null || _bodyInitialization.IsFaulted)
+                        _bodyInitialization = InitializeBodyAsync();
+                    await _bodyInitialization;
+                    if (!RequestIsCurrent(request, revision, tab)) return;
+                    if (_bodyLoadFailed) { NavigateBodyShell(); return; }
+                    if (!_webViewReady) return;
+                    string raw = record?.Text ?? string.Empty;
+                    bool htmlText = raw.Contains("katex-html", StringComparison.OrdinalIgnoreCase)
+                        || raw.Contains("<span class=\"katex\"", StringComparison.OrdinalIgnoreCase);
+                    string body = record == null ? "<p>表示できるログがありません。</p>"
+                        : htmlText ? ResolveKatexSpans(raw) : BuildBodyHtmlWithDebug(raw, _mathMode);
+                    await ExecuteRenderAsync(body, BuildSummaryHtml(record?.Summary ?? string.Empty),
+                        !htmlText && _mathMode, revision);
+                }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"WebView2初期化失敗:\n{ex.Message}", "WebView2エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                if (RequestIsCurrent(request, revision, tab)) ReportDisplayFailure("選択タブ", ex);
             }
         }
 
@@ -164,127 +379,59 @@ namespace gironWin.LogReader
 
         private void RenderCurrentRecord()
         {
-            if (!_webViewReady) return;
-
+            if (!IsInitialized || MainTabControl == null || ReaderUnavailable) return;
+            long revision = ++_contentRevision;
+            long request = ++_requestSerial;
+            ClearQuoteSelection();
+            QuoteStatusLabel.Text = string.Empty;
             bool ok = _records.Count > 0 && _currentIndex >= 0 && _currentIndex < _records.Count;
-
+            var record = ok ? _records[_currentIndex] : null;
             PrevButton.IsEnabled = ok && _currentIndex > 0;
             NextButton.IsEnabled = ok && _currentIndex < _records.Count - 1;
-
-            SelectedTextBlock.Text        = "（テキストを選択してください）";
-            QuoteRegisterButton.IsEnabled = false;
-            QuoteStatusLabel.Text         = string.Empty;
-
-            if (!ok)
-            {
-                HeaderTurnLabel.Text      = "ログなし";
-                HeaderDirectionLabel.Text = string.Empty;
-                HeaderTimestampLabel.Text = string.Empty;
-                PageInfoLabel.Text        = "0 / 0";
-                _ = ExecuteRenderAsync("<p>表示できるログがありません。</p>", "", false);
-                return;
-            }
-
-            var rec = _records[_currentIndex];
-            HeaderTurnLabel.Text      = $"Turn {rec.TurnNumber}";
-            HeaderDirectionLabel.Text = $"{rec.Direction}  {rec.SourceSite}→{rec.TargetSite}";
-            HeaderTimestampLabel.Text = rec.Timestamp.ToString("yyyy/MM/dd HH:mm:ss");
-            PageInfoLabel.Text        = $"{_currentIndex + 1} / {_records.Count}";
-
-            // AIサイトHTML
-            if (!string.IsNullOrEmpty(rec.HtmlSnapshotPath) && File.Exists(rec.HtmlSnapshotPath))
-            {
-                AiHtmlWebView.Visibility = Visibility.Visible;
-                NoAiHtmlLabel.Visibility = Visibility.Collapsed;
-
-                // ★修正: ファイルを直接開かず、katex-html 除去してから表示
-                try
-                {
-                    string rawHtml     = File.ReadAllText(rec.HtmlSnapshotPath, Encoding.UTF8);
-                    string filteredHtml = ResolveKatexSpans(rawHtml);
-
-                    // 相対パス（画像・CSS等）を絶対パスに解決するため base タグを注入
-                    string baseDir = Path.GetDirectoryName(rec.HtmlSnapshotPath)!
-                                         .Replace('\\', '/');
-                    string baseTag = $"<base href=\"file:///{baseDir}/\">";
-
-                    // <head> の直後に base タグを挿入
-                    int headClose = filteredHtml.IndexOf("<head>", StringComparison.OrdinalIgnoreCase);
-                    if (headClose >= 0)
-                    {
-                        int insertAt = headClose + "<head>".Length;
-                        filteredHtml = filteredHtml.Insert(insertAt, baseTag);
-                    }
-                    else
-                    {
-                        filteredHtml = baseTag + filteredHtml;
-                    }
-
-                    AiHtmlWebView.CoreWebView2.NavigateToString(filteredHtml);
-                }
-                catch
-                {
-                    // フォールバック: フィルタなしで直接開く
-                    AiHtmlWebView.Source = new Uri(rec.HtmlSnapshotPath);
-                }
-
-                // 画像一覧を生成
-                RenderImageList(rec.HtmlSnapshotPath);
-            }
-            else
-            {
-                AiHtmlWebView.Visibility = Visibility.Collapsed;
-                NoAiHtmlLabel.Visibility = Visibility.Visible;
-
-                // ★追加: 画像なし状態にリセット
-                ImageListWebView.Visibility = Visibility.Collapsed;
-                NoImageLabel.Visibility     = Visibility.Visible;
-                ImageCountLabel.Text        = "画像なし";
-            }
-
-            // 送信プロンプト
-            PromptTextBox.Text = rec.InputText ?? "(プロンプトなし)";
-
-            // RAWテキスト
-            string rawText = rec.Text ?? string.Empty;
-            RawTextBox.Text = rawText;
-            RawLengthLabel.Text = $"{rawText.Length} 文字";
-
-            bool isAlreadyHtml = rawText.Contains("katex-html", StringComparison.OrdinalIgnoreCase)
-                              || rawText.Contains("<span class=\"katex\"", StringComparison.OrdinalIgnoreCase);
-
-            string bodyHtml;
-            bool   effectiveMathMode;
-
-            if (isAlreadyHtml)
-            {
-                // ★修正: katex-mathml 除去、katex-html 保持
-                bodyHtml = ResolveKatexSpans(rawText);
-                effectiveMathMode = false;
-            }
-            else
-            {
-                bodyHtml = BuildBodyHtmlWithDebug(rawText, _mathMode);
-                effectiveMathMode = _mathMode;
-            }
-
-            string summaryHtml = BuildSummaryHtml(rec.Summary ?? string.Empty);
-            _ = ExecuteRenderAsync(bodyHtml, summaryHtml, effectiveMathMode);
-            UpdateDebugPanel();
+            HeaderTurnLabel.Text = ok ? $"Turn {record!.TurnNumber}" : "ログなし";
+            HeaderDirectionLabel.Text = ok ? $"{record!.Direction}  {record.SourceSite}→{record.TargetSite}" : string.Empty;
+            HeaderTimestampLabel.Text = ok ? record!.Timestamp.ToString("yyyy/MM/dd HH:mm:ss") : string.Empty;
+            PageInfoLabel.Text = ok ? $"{_currentIndex + 1} / {_records.Count}" : "0 / 0";
+            PromptTextBox.Text = record?.InputText ?? "(プロンプトなし)";
+            _debugRaw = record?.Text ?? string.Empty;
+            RawTextBox.Text = _debugRaw;
+            RawLengthLabel.Text = $"{_debugRaw.Length} 文字";
+            _ = RefreshSelectedTabAsync(request, revision);
         }
 
-        private async Task ExecuteRenderAsync(string bodyHtml, string summaryHtml, bool mathMode)
+        private async Task ExecuteRenderAsync(string bodyHtml, string summaryHtml,
+            bool mathMode, long revision)
         {
-            if (!_webViewReady) return;
-            try
-            {
-                string safeBody    = JsonSerializer.Serialize(bodyHtml);
-                string safeSummary = JsonSerializer.Serialize(summaryHtml);
-                string safeMath    = mathMode ? "true" : "false";
-                string script = $"renderContent({safeBody},{safeSummary},{safeMath});";
-                await BodyWebView.CoreWebView2.ExecuteScriptAsync(script);
-            }
-            catch { }
+            if (ReaderUnavailable || !_webViewReady || revision != _contentRevision) return;
+            string body = JsonSerializer.Serialize(bodyHtml);
+            string summary = JsonSerializer.Serialize(summaryHtml);
+            string math = mathMode ? "true" : "false";
+            string script = $@"
+(() => {{
+    try {{
+        if ((window.__gironDocumentRevision || 0) > {revision}) return 'stale';
+        if (typeof renderContent !== 'function') return 'missing-render-function';
+        if (!window.__gironSelectionInstalled) {{
+            document.addEventListener('mouseup', () => {{
+                const text = window.getSelection()?.toString() || '';
+                window.chrome.webview.postMessage({{
+                    kind: 'giron-selection', revision: window.__gironDocumentRevision || -1, text
+                }});
+            }});
+            window.__gironSelectionInstalled = true;
+        }}
+        window.getSelection()?.removeAllRanges();
+        renderContent({body}, {summary}, {math});
+        window.__gironDocumentRevision = {revision};
+        return 'ok';
+    }} catch (error) {{ return 'error:' + String(error); }}
+}})();";
+            string result = await BodyWebView.CoreWebView2.ExecuteScriptAsync(script);
+            if (ReaderUnavailable || revision != _contentRevision) return;
+            string status = JsonSerializer.Deserialize<string>(result) ?? "null";
+            if (status == "stale") return;
+            if (status != "ok") throw new InvalidOperationException($"本文描画失敗: {status}");
+            _bodyRenderedRevision = revision;
         }
 
         private static string BuildBodyHtml(string text, bool mathMode)
@@ -404,28 +551,54 @@ namespace gironWin.LogReader
 
         private void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
+            if (!CanReadBodySelection()) return;
             try
             {
-                string msg = e.TryGetWebMessageAsString();
-                if (msg.StartsWith("sel:"))
-                {
-                    string sel = msg["sel:".Length..].Trim();
-                    if (!string.IsNullOrWhiteSpace(sel)) { SelectedTextBlock.Text = sel; QuoteRegisterButton.IsEnabled = true; }
-                }
+                using var message = JsonDocument.Parse(e.WebMessageAsJson);
+                var root = message.RootElement;
+                // Legacy unversioned "sel:" messages cannot establish record identity.
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("kind", out var kind)
+                    || kind.GetString() != "giron-selection"
+                    || !root.TryGetProperty("revision", out var revision)
+                    || !revision.TryGetInt64(out long value)
+                    || !root.TryGetProperty("text", out var text)
+                    || text.ValueKind != JsonValueKind.String) return;
+                SetQuoteSelection(text.GetString() ?? string.Empty, value);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LogReader selection] {ex}");
+            }
         }
 
         private async void GetSelectionButton_Click(object sender, RoutedEventArgs e)
         {
-            if (!_webViewReady) return;
+            if (!CanReadBodySelection() || MainTabControl.SelectedIndex != 0)
+            {
+                QuoteStatusLabel.Text = "現在の本文の表示完了後に選択してください。";
+                return;
+            }
+            long revision = _contentRevision;
             try
             {
-                string raw = await BodyWebView.CoreWebView2.ExecuteScriptAsync("window.getSelection().toString()");
-                string sel = raw.Trim('"').Replace("\\n", "\n").Replace("\\r", "").Trim();
-                if (!string.IsNullOrWhiteSpace(sel)) { SelectedTextBlock.Text = sel; QuoteRegisterButton.IsEnabled = true; }
+                string json = await BodyWebView.CoreWebView2.ExecuteScriptAsync(@"
+(() => ({ revision: window.__gironDocumentRevision || -1,
+           text: window.getSelection()?.toString() || '' }))();");
+                if (ReaderUnavailable || revision != _contentRevision || !CanReadBodySelection()) return;
+                using var message = JsonDocument.Parse(json);
+                var root = message.RootElement;
+                if (root.TryGetProperty("revision", out var pageRevision)
+                    && pageRevision.TryGetInt64(out long value) && value == revision
+                    && root.TryGetProperty("text", out var text)
+                    && text.ValueKind == JsonValueKind.String)
+                    SetQuoteSelection(text.GetString() ?? string.Empty, revision);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                if (!ReaderUnavailable && revision == _contentRevision)
+                    ReportDisplayFailure("選択取得", ex);
+            }
         }
 
         private void MathToggle_Changed(object sender, RoutedEventArgs e) { _mathMode = MathToggle.IsChecked == true; RenderCurrentRecord(); }
@@ -434,19 +607,41 @@ namespace gironWin.LogReader
 
         private async void QuoteRegisterButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_currentIndex < 0 || _currentIndex >= _records.Count) return;
+            if (!CanRegisterSelection()) return;
             string selected = SelectedTextBlock.Text.Trim();
             if (string.IsNullOrWhiteSpace(selected) || selected == "（テキストを選択してください）") return;
-
-            var rec = _records[_currentIndex];
+            long revision = _contentRevision;
+            var record = _records[_currentIndex];
             string target = (QuoteTargetCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "Left";
-
-            if (target == "Clipboard") { Clipboard.SetText(selected); QuoteStatusLabel.Text = "✔ コピーしました"; return; }
-
-            if (!string.IsNullOrEmpty(_pipeId))
+            _quoteSending = true;
+            QuoteRegisterButton.IsEnabled = false;
+            try
             {
-                bool ok = await SendQuoteAsync(new QuoteCallbackPayload { SourceTurnNumber = rec.TurnNumber, QuotedText = selected, TargetSeat = target, Direction = rec.Direction });
-                QuoteStatusLabel.Text = ok ? $"✔ {target}へ登録しました" : "⚠ 送信失敗";
+                if (target == "Clipboard")
+                {
+                    Clipboard.SetText(selected);
+                    QuoteStatusLabel.Text = "コピーしました";
+                }
+                else if (!string.IsNullOrEmpty(_pipeId))
+                {
+                    bool ok = await SendQuoteAsync(new QuoteCallbackPayload
+                    {
+                        SourceTurnNumber = record.TurnNumber, QuotedText = selected,
+                        TargetSeat = target, Direction = record.Direction
+                    });
+                    if (!ReaderUnavailable && revision == _contentRevision)
+                        QuoteStatusLabel.Text = ok ? $"{target}へ登録しました" : "送信失敗";
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!ReaderUnavailable && revision == _contentRevision)
+                    ReportDisplayFailure("引用登録", ex);
+            }
+            finally
+            {
+                _quoteSending = false;
+                if (!ReaderUnavailable) QuoteRegisterButton.IsEnabled = CanRegisterSelection();
             }
         }
 
@@ -466,7 +661,7 @@ namespace gironWin.LogReader
         private void CopyButton_Click(object sender, RoutedEventArgs e) { if (_records.Count > 0) Clipboard.SetText(_records[_currentIndex].Text ?? ""); }
         private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
 
-        private void RenderImageList(string htmlSnapshotPath)
+        private bool RenderImageList(string htmlSnapshotPath)
         {
             try
             {
@@ -493,7 +688,7 @@ namespace gironWin.LogReader
                     ImageListWebView.Visibility = Visibility.Collapsed;
                     NoImageLabel.Visibility     = Visibility.Visible;
                     ImageCountLabel.Text        = "画像なし";
-                    return;
+                    return true;
                 }
 
                 ImageListWebView.Visibility = Visibility.Visible;
@@ -502,10 +697,15 @@ namespace gironWin.LogReader
 
                 string listHtml = BuildImageListHtml(srcList, htmlSnapshotPath);
                 ImageListWebView.CoreWebView2.NavigateToString(listHtml);
+                return true;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[ImageList] 失敗: {ex.Message}");
+                ImageListWebView.Visibility = Visibility.Collapsed;
+                NoImageLabel.Visibility = Visibility.Visible;
+                ImageCountLabel.Text = "画像の読み込みに失敗しました";
+                ReportDisplayFailure("画像一覧", ex);
+                return false;
             }
         }
 
@@ -676,3 +876,4 @@ namespace gironWin.LogReader
         }
     }
 }
+

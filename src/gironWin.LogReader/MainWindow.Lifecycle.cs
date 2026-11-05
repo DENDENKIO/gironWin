@@ -12,6 +12,11 @@ namespace gironWin.LogReader
         {
             try
             {
+                // Mark closed before Dispose can trigger callbacks.
+                _readerClosing = true;
+                _requestSerial++;
+                _selectionRevision = -1;
+                _bodyRenderedRevision = -1;
                 _webViewReady = false;
                 if (!_webViewsReleased)
                 {
