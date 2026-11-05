@@ -158,7 +158,8 @@ namespace gironWin
 
         private void OpenInterventionWindow()
         {
-            if (_debateService == null || !_debateService.IsRunning)
+            if (_isWindowClosing || _debateCommandPending || _debateService == null
+                || !_debateService.IsRunning || _debateService.IsStopping)
             {
                 MessageBox.Show(
                     "討論を開始してから介入してください。",
@@ -175,7 +176,7 @@ namespace gironWin
                 {
                     AppLogger.Info(LogCategory.System,
                         $"介入テキスト送信 target={win.Target} len={win.Text.Length}");
-                    _ = InjectInterventionAsync(win.Text, win.Target);
+                    _interventionTask = InjectInterventionAsync(win.Text, win.Target);
                     return;
                 }
             }
@@ -186,22 +187,36 @@ namespace gironWin
         private async System.Threading.Tasks.Task InjectInterventionAsync(
             string text, InterventionTarget target)
         {
+            var service = _debateService;
+            bool CanSend() => !_isWindowClosing && !_webViewsReleased
+                && ReferenceEquals(service, _debateService)
+                && service?.IsRunning == true && !service.IsStopping;
             async System.Threading.Tasks.Task SendTo(
                 Microsoft.Web.WebView2.Wpf.WebView2 wv, string url)
             {
+                if (!CanSend()) return;
                 var adapter = _adapterResolver.Resolve(url);
                 if (adapter == null) return;
                 bool ok = await adapter.SetInputAsync(wv, text);
-                if (ok) await adapter.SendAsync(wv);
+                if (ok && CanSend()) await adapter.SendAsync(wv);
             }
-
-            if (target == InterventionTarget.Left || target == InterventionTarget.Both)
-                await SendTo(LeftWebView, LeftUrlTextBox.Text.Trim());
-            if (target == InterventionTarget.Right || target == InterventionTarget.Both)
-                await SendTo(RightWebView, RightUrlTextBox.Text.Trim());
-
-            SetStatus($"介入テキストを送信しました ({target})");
-            _debateService?.Resume();
+            try
+            {
+                if (target == InterventionTarget.Left || target == InterventionTarget.Both)
+                    await SendTo(LeftWebView, LeftUrlTextBox.Text.Trim());
+                if (target == InterventionTarget.Right || target == InterventionTarget.Both)
+                    await SendTo(RightWebView, RightUrlTextBox.Text.Trim());
+                if (CanSend())
+                {
+                    SetStatus($"介入テキストを送信しました ({target})");
+                    service?.Resume();
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error(LogCategory.System, "介入送信に失敗しました。", ex);
+                if (CanSend()) service?.Resume();
+            }
         }
 
         // ---------------------------------------------------------------
@@ -357,59 +372,88 @@ namespace gironWin
         // ---------------------------------------------------------------
         // 討論制御ボタン
         // ---------------------------------------------------------------
-        private void StartButton_Click(object sender, RoutedEventArgs e)
+        private async void StartButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_debateService?.IsRunning == true) return;
+            if (_isWindowClosing || _debateCommandPending || _debateService?.IsRunning == true) return;
+            _debateCommandPending = true;
+            StartButton.IsEnabled = false;
+            try
+            {
+                if (_debateService != null) await _debateService.Completion;
+                if (_isWindowClosing) return;
+                DetachDebateService();
+                _approvalQueue   = new ApprovalQueue();
+                _transferService = new TransferService(_adapterResolver, _turnRecords);
+                _sessionRepository.StartNewSession();
+                _quoteService.Clear();
+                _debateService   = new AutoDebateService(
+                    _transferService, _approvalQueue, _adapterResolver,
+                    _logRepository);
 
-            _approvalQueue   = new ApprovalQueue();
-            _transferService = new TransferService(_adapterResolver, _turnRecords);
-            _sessionRepository.StartNewSession();
-            _quoteService.Clear();
-            _debateService   = new AutoDebateService(
-                _transferService, _approvalQueue, _adapterResolver,
-                _logRepository);
+                // ★ 追加: TransferService の内部ログを AppLogger に接続
+                _transferService.DebugLog += (_, msg) =>
+                    AppLogger.Debug(LogCategory.Transfer, msg);
 
-            // ★ 追加: TransferService の内部ログを AppLogger に接続
-            _transferService.DebugLog += (_, msg) =>
-                AppLogger.Debug(LogCategory.Transfer, msg);
+                // ★ 追加: AutoDebateService の StatusChanged を AppLogger に接続
+                _debateService.StatusChanged += (_, msg) =>
+                    AppLogger.Info(LogCategory.RunLoop, msg);
 
-            // ★ 追加: AutoDebateService の StatusChanged を AppLogger に接続
-            _debateService.StatusChanged += (_, msg) =>
-                AppLogger.Info(LogCategory.RunLoop, msg);
+                _debateService.StatusChanged              += DebateService_StatusChanged;
+                _debateService.TurnAdvanced               += DebateService_TurnAdvanced;
+                _debateService.DebateStopped              += DebateService_DebateStopped;
+                _debateService.ThirdSeatInputRequired     += DebateService_ThirdSeatInputRequired;
+                _debateService.HumanPriorityInputRequired += DebateService_HumanPriorityInputRequired;
+                _debateService.ResearchTagsExtracted      += DebateService_ResearchTagsExtracted;
 
-            _debateService.StatusChanged              += DebateService_StatusChanged;
-            _debateService.TurnAdvanced               += DebateService_TurnAdvanced;
-            _debateService.DebateStopped              += DebateService_DebateStopped;
-            _debateService.ThirdSeatInputRequired     += DebateService_ThirdSeatInputRequired;
-            _debateService.HumanPriorityInputRequired += DebateService_HumanPriorityInputRequired;
-            _debateService.ResearchTagsExtracted      += DebateService_ResearchTagsExtracted;
+                _approvalQueue.ApprovalRequested += ApprovalQueue_ApprovalRequested;
 
-            _approvalQueue.ApprovalRequested += ApprovalQueue_ApprovalRequested;
+                _turnRecords.Clear();
 
-            _turnRecords.Clear();
+                AppLogger.Info(LogCategory.System,
+                    $"===== 討論開始 ===== MaxTurns={MaxTurnsTextBox.Text} " +
+                    $"Left={LeftUrlTextBox.Text.Trim()} Right={RightUrlTextBox.Text.Trim()}");
 
-            AppLogger.Info(LogCategory.System,
-                $"===== 討論開始 ===== MaxTurns={MaxTurnsTextBox.Text} " +
-                $"Left={LeftUrlTextBox.Text.Trim()} Right={RightUrlTextBox.Text.Trim()}");
-
-            var config = BuildConfig();
-            _debateService.Start(config);
-
-            StartButton.IsEnabled         = false;
-            StopButton.IsEnabled          = true;
-            PauseResumeButton.IsEnabled   = true;
-            InterventionButton.IsEnabled  = true;
+                var config = BuildConfig();
+                StartButton.IsEnabled         = false;
+                StopButton.IsEnabled          = true;
+                PauseResumeButton.IsEnabled   = true;
+                InterventionButton.IsEnabled  = true;
+                _debateService.Start(config);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error(LogCategory.System, "討論開始に失敗しました。", ex);
+                if (!_isWindowClosing) SetStatus($"開始失敗: {ex.Message}");
+            }
+            finally
+            {
+                _debateCommandPending = false;
+                if (!_isWindowClosing && _debateService?.IsRunning != true) ApplyStoppedUi();
+            }
         }
 
-        private void StopButton_Click(object sender, RoutedEventArgs e)
+        private async void StopButton_Click(object sender, RoutedEventArgs e)
         {
-            AppLogger.Info(LogCategory.System, "停止ボタン押下");
-            _debateService?.Stop();
+            if (_isWindowClosing || _debateCommandPending) return;
+            _debateCommandPending = true;
+            DisableDebateControls();
+            SetStatus("停止処理中…終了を待っています。");
+            try { await StopCurrentDebateAsync(); }
+            catch (Exception ex)
+            {
+                AppLogger.Error(LogCategory.System, "討論の停止処理に失敗しました。", ex);
+                if (!_isWindowClosing) SetStatus($"停止処理失敗: {ex.Message}");
+            }
+            finally
+            {
+                _debateCommandPending = false;
+                if (!_isWindowClosing && _debateService?.IsRunning != true) ApplyStoppedUi();
+            }
         }
 
         private void PauseResumeButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_debateService == null) return;
+            if (_isWindowClosing || _debateCommandPending || _debateService == null || _debateService.IsStopping) return;
             if (_debateService.IsPaused)
             {
                 _debateService.Resume();
@@ -533,72 +577,56 @@ namespace gironWin
         // AutoDebateService イベント
         // ---------------------------------------------------------------
         private void DebateService_StatusChanged(object? sender, string msg)
-            => Dispatcher.Invoke(() => SetStatus(msg));
+            => RunCurrentDebateUi(sender, () => SetStatus(msg));
 
         private void DebateService_TurnAdvanced(object? sender, int count)
-            => Dispatcher.Invoke(() => TurnCountLabel.Text = $"往復: {count}");
+            => RunCurrentDebateUi(sender, () => TurnCountLabel.Text = $"往復: {count}");
 
         private void DebateService_DebateStopped(object? sender, EventArgs e)
-            => Dispatcher.Invoke(() =>
+            => RunCurrentDebateUi(sender, () =>
             {
-                StartButton.IsEnabled        = true;
-                StopButton.IsEnabled         = false;
-                PauseResumeButton.IsEnabled  = false;
-                PauseResumeButton.Content    = "⏸ 一時停止";
-                InterventionButton.IsEnabled = false;
-                ApprovalPanel.Visibility     = Visibility.Collapsed;
-                AppLogger.Info(LogCategory.System, "討論停止イベント受信 → UI更新");
-
-                // ── 追加：終了時点のログを退避する ──
-                _lastTurnRecords    = _turnRecords.ToList();
-                _lastResearchService = _debateService?.ResearchService;
+                CloseDebateInputWindows();
+                if (!_debateCommandPending) ApplyStoppedUi();
             });
 
-        /// <summary>第3席 Human モード：入力ダイアログを表示して OnInputReady を呼ぶ。</summary>
         private void DebateService_ThirdSeatInputRequired(object? sender, ThirdSeatInputRequest req)
-            => Dispatcher.Invoke(() =>
+            => RunCurrentDebateUi(sender, () =>
             {
-                AppLogger.Info(LogCategory.System,
-                    $"第3席入力要求 DisplayName={req.DisplayName} Role={req.Role}");
+                if (_debateService?.IsStopping == true) return;
                 var win = new ThirdSeatWindow(req) { Owner = this };
+                TrackDebateInputWindow(win, () => req.OnInputReady?.Invoke(null));
                 win.Show();
             });
 
-        /// <summary>
-        /// HumanPriority モード：割り込み入力ダイアログを表示する。
-        /// タイムアウト前にユーザーが送信すれば req.OnInputReady(text) を呼ぶ。
-        /// タイムアウトすれば req.OnTimeout() を呼ぶ（討論ループ側でスキップ）。
-        /// </summary>
         private void DebateService_HumanPriorityInputRequired(object? sender, HumanPriorityInputRequest req)
-            => Dispatcher.Invoke(() =>
+            => RunCurrentDebateUi(sender, () =>
             {
-                AppLogger.Info(LogCategory.System,
-                    $"HumanPriority 入力要求 TimeoutMs={req.TimeoutMs}");
+                if (_debateService?.IsStopping == true) return;
                 var win = new HumanPriorityWindow(req) { Owner = this };
+                TrackDebateInputWindow(win, null);
                 win.Show();
             });
 
         private void DebateService_ResearchTagsExtracted(object? sender, ResearchTagsExtractedEventArgs e)
-            => Dispatcher.Invoke(() =>
+            => RunCurrentDebateUi(sender, () =>
             {
-                ResearchStatusItem.Content = $"🔬 研究タグ: {e.TotalCount} 件";
+                ResearchStatusItem.Content = $"研究タグ: {e.TotalCount} 件";
                 AppLogger.Debug(LogCategory.System,
                     $"研究タグ抽出 total={e.TotalCount} new={e.NewTags.Count}");
             });
 
-        // ---------------------------------------------------------------
-        // ApprovalQueue イベント
-        // ---------------------------------------------------------------
         private void ApprovalQueue_ApprovalRequested(object? sender, ApprovalRequestedEventArgs e)
-            => Dispatcher.Invoke(() =>
+        {
+            if (_isWindowClosing || Dispatcher.HasShutdownStarted) return;
+            Dispatcher.Invoke(() =>
             {
-                AppLogger.Info(LogCategory.System,
-                    $"承認要求 src={e.Source} tgt={e.Target} len={e.Text.Length}");
-
+                if (_isWindowClosing || !ReferenceEquals(sender, _approvalQueue)
+                    || _debateService?.IsStopping == true) return;
                 ApprovalSourceLabel.Text = $"送信元: {e.Source} → {e.Target}";
-                ApprovalTextBox.Text     = e.Text;
+                ApprovalTextBox.Text = e.Text;
                 ApprovalPanel.Visibility = Visibility.Visible;
             });
+        }
 
         private void ApproveButton_Click(object sender, RoutedEventArgs e)
         {
@@ -672,10 +700,31 @@ namespace gironWin
         // ---------------------------------------------------------------
         // ウィンドウクローズ
         // ---------------------------------------------------------------
-        private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+        private async void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            AppLogger.Info(LogCategory.System, "MainWindow クローズ → 討論停止");
-            _debateService?.Stop();
+            if (_allowWindowClose) return;
+            e.Cancel = true;
+            if (_isWindowClosing) return;
+            _isWindowClosing = true;
+            DisableDebateControls();
+            SetStatus("終了処理中…討論の停止を待っています。");
+            try
+            {
+                await StopCurrentDebateAsync();
+                // Do not call Close recursively on the original Closing event stack.
+                await System.Windows.Threading.Dispatcher.Yield(
+                    System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                DetachDebateService();
+                _allowWindowClose = true;
+                Close();
+            }
+            catch (Exception ex)
+            {
+                _isWindowClosing = false;
+                AppLogger.Error(LogCategory.System, "終了処理に失敗しました。", ex);
+                SetStatus($"終了処理失敗: {ex.Message}");
+                if (_debateService?.IsRunning != true) ApplyStoppedUi();
+            }
         }
 
         // ---------------------------------------------------------------
@@ -693,3 +742,4 @@ namespace gironWin
             => string.IsNullOrWhiteSpace(s) ? null : s;
     }
 }
+
