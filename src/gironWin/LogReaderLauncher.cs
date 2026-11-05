@@ -8,157 +8,140 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 
 namespace gironWin
 {
     public static class LogReaderLauncher
     {
-        private const string LogReaderExeName = "gironWin.LogReader.exe";
+        private const string ExeName = "gironWin.LogReader.exe";
 
-        public static void Open(
-            IReadOnlyList<TransferRecord> records,
-            int startIndex,
-            QuoteService? quoteService = null)
+        public static void Open(IReadOnlyList<TransferRecord> records,
+            int startIndex, QuoteService? quoteService = null)
         {
-            string? exePath = FindLogReaderExe();
-
-            if (exePath == null)
-            {
-                // 探索した全パスをデバッグ表示
-                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                System.Windows.MessageBox.Show(
-                    "gironWin.LogReader.exe が見つかりません。\n\n" +
-                    "【対処方法】\n" +
-                    "Visual Studio のツールバーのプラットフォームを\n" +
-                    "「Any CPU」→「x64」に変更してから\n" +
-                    "gironWin.LogReader を右クリック→ビルド\n\n" +
-                    $"探索起点: {baseDir}",
-                    "ログリーダー未ビルド",
-                    System.Windows.MessageBoxButton.OK,
-                    System.Windows.MessageBoxImage.Warning);
-                return;
-            }
-
-            string pipeId  = Guid.NewGuid().ToString("N");
-            string tmpPath = Path.Combine(
-                Path.GetTempPath(), $"giron_logreader_{pipeId}.json");
-
-            var payload = new LogReaderPayload
-            {
-                Records    = new List<TransferRecord>(records),
-                StartIndex = startIndex,
-                PipeId     = pipeId
-            };
-            File.WriteAllText(tmpPath,
-                JsonSerializer.Serialize(payload), Encoding.UTF8);
-
             try
             {
-                Process.Start(new ProcessStartInfo
+                string expected = FindExpectedExe();
+                if (!File.Exists(expected))
                 {
-                    FileName        = exePath,
-                    Arguments       = $"\"{tmpPath}\"",
-                    UseShellExecute = false
-                });
-
-                if (quoteService != null)
-                    _ = ListenForQuotesAsync(pipeId, quoteService);
+                    MessageBox.Show($"対応するログリーダーがありません。\n本体と同じ構成でソリューション全体をビルドしてください。\n\n必要な場所:\n{expected}",
+                        "ログリーダー未ビルド", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                var payload = new LogReaderPayload
+                {
+                    Records = new List<TransferRecord>(records),
+                    StartIndex = startIndex,
+                    PipeId = Guid.NewGuid().ToString("N")
+                };
+                _ = RunReaderAsync(expected, payload, quoteService);
             }
             catch (Exception ex)
             {
-                System.Windows.MessageBox.Show(
-                    $"LogReader 起動失敗:\n{ex.Message}\n\nパス: {exePath}");
+                MessageBox.Show($"LogReader準備失敗:\n{ex.Message}");
             }
         }
 
-        /// <summary>
-        /// WinUI 3 の出力パスは TFM + アーキテクチャ サブフォルダが付く。
-        /// 例: bin\Debug\net8.0-windows10.0.22621.0\x64\gironWin.LogReader.exe
-        /// Any CPU ではEXEが生成されないため x64/x86/arm64 を優先検索。
-        /// </summary>
-        private static string? FindLogReaderExe()
+        private static string FindExpectedExe()
         {
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-
-            // ① 同じフォルダ（発行時・手動コピー時）
-            string same = Path.Combine(baseDir, LogReaderExeName);
-            if (File.Exists(same)) return same;
-
-            // ② baseDirから "src" フォルダまで親を辿る
-            DirectoryInfo? srcDir = new DirectoryInfo(baseDir);
-            while (srcDir != null &&
-                   !srcDir.Name.Equals("src", StringComparison.OrdinalIgnoreCase))
-                srcDir = srcDir.Parent;
-
-            if (srcDir == null) return null;
-
-            string logReaderBinRoot = Path.Combine(
-                srcDir.FullName, "gironWin.LogReader", "bin");
-
-            if (!Directory.Exists(logReaderBinRoot)) return null;
-
-            // ③ 全再帰検索（TFM・構成・アーキテクチャのどの組み合わせでも対応）
-            string[] allExes = Directory.GetFiles(
-                logReaderBinRoot, LogReaderExeName,
-                SearchOption.AllDirectories);
-
-            if (allExes.Length == 0) return null;
-
-            // 優先順位: x64 > x86 > arm64 > その他、かつ Release > Debug
-            static int Score(string path)
+            for (DirectoryInfo? dir = new DirectoryInfo(baseDir); dir != null; dir = dir.Parent)
             {
-                int arch   = path.Contains("x64")   ? 3 :
-                             path.Contains("x86")   ? 2 :
-                             path.Contains("arm64") ? 1 : 0;
-                int config = path.Contains("Release") ? 10 : 0;
-                return arch + config;
+                if (!dir.Name.Equals("bin", StringComparison.OrdinalIgnoreCase)
+                    || dir.Parent == null
+                    || !dir.Parent.Name.Equals("gironWin", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var src = dir.Parent.Parent;
+                if (src == null) break;
+                string relative = Path.GetRelativePath(dir.FullName, baseDir);
+                return Path.GetFullPath(Path.Combine(src.FullName,
+                    "gironWin.LogReader", "bin", relative, ExeName));
             }
-
-            string best = allExes[0];
-            int bestScore = Score(allExes[0]);
-            foreach (string p in allExes)
-            {
-                int s = Score(p);
-                if (s > bestScore) { bestScore = s; best = p; }
-            }
-            return best;
+            return Path.Combine(baseDir, ExeName);
         }
 
-        private static async Task ListenForQuotesAsync(
-            string pipeId, QuoteService quoteService)
+        private static async Task RunReaderAsync(string exePath,
+            LogReaderPayload payload, QuoteService? quotes)
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromHours(2));
-            while (!cts.Token.IsCancellationRequested)
+            string temp = Path.Combine(Path.GetTempPath(), $"giron_logreader_{payload.PipeId}.json");
+            using var cts = new CancellationTokenSource();
+            var app = Application.Current;
+            ExitEventHandler onExit = (_, _) => cts.Cancel();
+            if (app != null) app.Exit += onExit;
+            Task listener = Task.CompletedTask;
+            Process? process = null;
+            try
+            {
+                File.WriteAllText(temp, JsonSerializer.Serialize(payload), Encoding.UTF8);
+                if (quotes != null)
+                    listener = ListenForQuotesAsync(payload.PipeId, quotes, cts.Token);
+                AppLogger.Info(LogCategory.System, $"LogReader起動: {exePath}");
+                var info = new ProcessStartInfo
+                {
+                    FileName = exePath,
+                    WorkingDirectory = Path.GetDirectoryName(exePath)!,
+                    UseShellExecute = false
+                };
+                info.ArgumentList.Add(temp);
+                process = Process.Start(info)
+                    ?? throw new InvalidOperationException("プロセスを起動できませんでした。");
+                await process.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+            catch (Exception ex)
+            {
+                AppLogger.Warn(LogCategory.System, $"LogReader失敗: {ex.Message}");
+                if (app != null && !app.Dispatcher.HasShutdownStarted)
+                    MessageBox.Show($"LogReader起動・監視失敗:\n{ex.Message}\n\n{exePath}");
+            }
+            finally
+            {
+                cts.Cancel();
+                try { await listener; }
+                catch (Exception ex) { Debug.WriteLine(ex); }
+                if (app != null) app.Exit -= onExit;
+                process?.Dispose();
+                try { File.Delete(temp); }
+                catch (Exception ex) { Debug.WriteLine(ex); }
+            }
+        }
+
+        private static async Task ListenForQuotesAsync(string pipeId,
+            QuoteService quotes, CancellationToken ct)
+        {
+            while (!ct.IsCancellationRequested)
             {
                 try
                 {
                     await using var server = new NamedPipeServerStream(
-                        $"giron_quote_{pipeId}",
-                        PipeDirection.In, 1,
-                        PipeTransmissionMode.Byte,
-                        PipeOptions.Asynchronous);
-
-                    await server.WaitForConnectionAsync(cts.Token);
-
+                        $"giron_quote_{pipeId}", PipeDirection.In, 1,
+                        PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                    await server.WaitForConnectionAsync(ct);
                     using var reader = new StreamReader(server, Encoding.UTF8);
-                    string json = await reader.ReadToEndAsync();
-
+                    string json = await reader.ReadToEndAsync(ct);
                     var cb = JsonSerializer.Deserialize<QuoteCallbackPayload>(json);
                     if (cb == null) continue;
-
-                    await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                    var app = Application.Current;
+                    if (app == null || app.Dispatcher.HasShutdownStarted) break;
+                    await app.Dispatcher.InvokeAsync(() =>
                     {
-                        quoteService.AddPartialQuote(new PartialQuote
+                        if (ct.IsCancellationRequested) return;
+                        quotes.AddPartialQuote(new PartialQuote
                         {
                             SourceTurnNumber = cb.SourceTurnNumber,
-                            QuotedText       = cb.QuotedText,
-                            TargetSeat       = cb.TargetSeat,
-                            RegisteredAt     = DateTime.Now
+                            QuotedText = cb.QuotedText,
+                            TargetSeat = cb.TargetSeat,
+                            RegisteredAt = DateTime.Now
                         });
-                    });
+                    }, System.Windows.Threading.DispatcherPriority.Normal, ct);
                 }
-                catch (OperationCanceledException) { break; }
-                catch { }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[LogReader quote] {ex}");
+                    try { await Task.Delay(250, ct); }
+                    catch (OperationCanceledException) { break; }
+                }
             }
         }
     }
