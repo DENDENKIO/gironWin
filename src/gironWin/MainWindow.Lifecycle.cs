@@ -8,12 +8,16 @@ namespace gironWin
     {
         private bool _webViewsReleased;
 
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+            BindVisibleLogMenuActions();
+        }
+
         protected override void OnClosed(EventArgs e)
         {
             try
             {
-                // Window_Closing already requests cancellation of the debate.
-                // Release each control even if releasing another one fails.
                 if (!_webViewsReleased)
                 {
                     _webViewsReleased = true;
