@@ -1,4 +1,5 @@
 using Microsoft.Web.WebView2.Wpf;
+using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
 
@@ -14,41 +15,33 @@ namespace gironWin
         public abstract Task<bool> IsGeneratingAsync(WebView2 webView);
         public abstract Task InjectObserverAsync(WebView2 webView);
 
-        // ★ JSON.stringify でラップして返す → 改行・引用符の切り捨て防止
         public async Task<string> GetSelectedTextAsync(WebView2 webView)
         {
             if (webView?.CoreWebView2 == null) return string.Empty;
-
-            string json = await webView.ExecuteScriptAsync(@"
-(() => {
-    try {
-        const sel = window.getSelection();
-        if (!sel || sel.rangeCount === 0) return JSON.stringify('');
-        return JSON.stringify(sel.toString() || '');
-    } catch(e) {
-        return JSON.stringify('');
-    }
-})()");
-
-            if (string.IsNullOrWhiteSpace(json) || json == "null") return string.Empty;
-            try { return JsonSerializer.Deserialize<string>(json) ?? string.Empty; }
-            catch { return json.Trim('"').Replace("\\n", "\n").Replace("\\\"", "\""); }
+            string json = await webView.ExecuteScriptAsync("window.getSelection()?.toString() || ''");
+            return JsonSerializer.Deserialize<string>(json) ?? string.Empty;
         }
 
+        // Both site extractors explicitly return JSON.stringify(text).
+        // Decode WebView2's outer JSON and that inner string exactly once each.
         protected async Task<string> ExecScriptStringAsync(WebView2 webView, string script)
         {
             if (webView?.CoreWebView2 == null) return string.Empty;
-            string json = await webView.ExecuteScriptAsync(script);
-            if (string.IsNullOrWhiteSpace(json) || json == "null") return string.Empty;
-            try { return JsonSerializer.Deserialize<string>(json) ?? string.Empty; }
-            catch { return json.Trim('"').Replace("\\n", "\n").Replace("\\\"", "\""); }
+            string outer = await webView.ExecuteScriptAsync(script);
+            if (string.IsNullOrWhiteSpace(outer) || outer == "null") return string.Empty;
+            string? inner = JsonSerializer.Deserialize<string>(outer);
+            if (inner == null) return string.Empty;
+            using var value = JsonDocument.Parse(inner);
+            if (value.RootElement.ValueKind != JsonValueKind.String)
+                throw new InvalidDataException("文字列抽出スクリプトがJSON文字列を返しませんでした。");
+            return value.RootElement.GetString() ?? string.Empty;
         }
 
         protected async Task<bool> ExecScriptBoolAsync(WebView2 webView, string script)
         {
             if (webView?.CoreWebView2 == null) return false;
-            string result = await webView.ExecuteScriptAsync(script);
-            return result.Contains("true", System.StringComparison.OrdinalIgnoreCase);
+            using var value = JsonDocument.Parse(await webView.ExecuteScriptAsync(script));
+            return value.RootElement.ValueKind == JsonValueKind.True;
         }
     }
 }
