@@ -16,10 +16,10 @@ namespace gironWin
         {
             _verifiedAdapters = _adapters.ToDictionary(
                 adapter => adapter,
-                adapter => (IAiSiteAdapter)new InputVerifiedAdapter(adapter));
+                adapter => (IAiSiteAdapter)new ReceiptVerifiedAdapter(
+                    new InputVerifiedAdapter(adapter)));
         }
 
-        // Preserve access to the original adapters for diagnostics and setup.
         public IReadOnlyList<IAiSiteAdapter> Adapters => _adapters;
 
         public IAiSiteAdapter? Resolve(string url)
